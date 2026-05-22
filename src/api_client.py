@@ -212,7 +212,7 @@ class UniFiAPIClient:
         # ── Modo API Key: usa endpoint de integrations ────────────────
         if self._use_api_key:
             url = f"{self.host}/proxy/network/integrations/v1/sites"
-            resp = self._get_raw(url)
+            resp = self._get_raw(url, _hdrs=self._headers_integrations())
             if resp and resp.status_code == 200:
                 try:
                     body  = resp.json()
@@ -301,30 +301,40 @@ class UniFiAPIClient:
     # ── helper interno ────────────────────────────────────────────────
 
     def _headers(self) -> Dict[str, str]:
+        """Headers para endpoints legados v1/v2 — nunca inclui API Key."""
+        h = {"Content-Type": "application/json"}
+        if self._csrf_token:
+            h["X-Csrf-Token"] = self._csrf_token
+        return h
+
+    def _headers_integrations(self) -> Dict[str, str]:
+        """Headers para Integrations API v1 — inclui API Key quando configurada."""
         h = {"Content-Type": "application/json"}
         if self._use_api_key:
-            # Autenticação via API Key (UniFi OS 5.x+ / Network 10.x+)
             h["X-API-Key"] = self._api_key
         elif self._csrf_token:
             h["X-Csrf-Token"] = self._csrf_token
         return h
 
-    def _get_raw(self, url: str, **kwargs) -> Optional[requests.Response]:
+    def _get_raw(self, url: str, _hdrs: Optional[Dict] = None, **kwargs) -> Optional[requests.Response]:
         """GET autenticado retornando o objeto Response (sem parse)."""
         if not self._authenticated:
             if not self.login():
-                return None  # inclui falha por 429 — não tenta de novo
+                return None
+        headers = _hdrs if _hdrs is not None else self._headers()
         try:
-            resp = self._session.get(url, headers=self._headers(),
-                                     timeout=30, **kwargs)
+            resp = self._session.get(url, headers=headers, timeout=30, **kwargs)
             if resp.status_code == 401:
-                # Sessão expirou — tenta relogin UMA única vez
+                if self._use_api_key:
+                    # API Key inválida ou sem permissão — não tenta re-login
+                    logger.warning("401 — API Key sem permissão para: {}", url)
+                    return resp
+                # Sessão cookie expirou — tenta relogin UMA única vez
                 logger.warning("Sessão expirada — re-autenticando…")
                 self._authenticated = False
                 if not self.login():
                     return None
-                resp = self._session.get(url, headers=self._headers(),
-                                         timeout=30, **kwargs)
+                resp = self._session.get(url, headers=headers, timeout=30, **kwargs)
             return resp
         except requests.Timeout:
             logger.warning("Timeout em GET {}", url)
@@ -420,7 +430,7 @@ class UniFiAPIClient:
 
         url = f"{self._base_integrations_v1}{endpoint}"
         try:
-            resp = self._session.get(url, headers=self._headers(), timeout=30, **kwargs)
+            resp = self._session.get(url, headers=self._headers_integrations(), timeout=30, **kwargs)
             if resp.status_code == 401:
                 if self._use_api_key:
                     logger.error("API Key inválida ou sem permissão para {} (401).", endpoint)
@@ -429,7 +439,7 @@ class UniFiAPIClient:
                 self._authenticated = False
                 if not self.login():
                     return None
-                resp = self._session.get(url, headers=self._headers(), timeout=30, **kwargs)
+                resp = self._session.get(url, headers=self._headers_integrations(), timeout=30, **kwargs)
             if resp.status_code == 404:
                 logger.debug("Integrations endpoint ausente: {} — firmware não suportado?", endpoint)
                 return None
@@ -699,7 +709,7 @@ class UniFiAPIClient:
             ("integrations_networks", f"{self._base_integrations_v1}/networks"),
         ]
         for label, url in integrations_tests:
-            resp = self._get_raw(url)
+            resp = self._get_raw(url, _hdrs=self._headers_integrations())
             report["endpoints"][label] = _classify_get(resp)
 
         # ── System-Log (POST) ─────────────────────────────────────────
