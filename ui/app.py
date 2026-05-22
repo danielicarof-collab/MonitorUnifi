@@ -23,7 +23,8 @@ load_dotenv(ROOT / ".env")
 import streamlit as st
 
 from src.database_manager import DatabaseManager
-from ui.components import overview, violators, security, reports
+from ui.components import overview, violators, security, reports, devices, infrastructure
+from ui.components.theme import inject_css
 
 # ------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -51,11 +52,19 @@ def _get_db() -> DatabaseManager:
 # ------------------------------------------------------------------
 def _sidebar() -> str:
     with st.sidebar:
-        st.image(
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Ubiquiti_Networks_2016.svg/320px-Ubiquiti_Networks_2016.svg.png",
-            width=180,
+        # Styled text logo instead of external image URL (avoids network failures)
+        st.markdown(
+            """
+            <div style="text-align:center; padding: 12px 0 8px;">
+              <div style="font-size:28px; font-weight:800; color:#58a6ff;
+                          letter-spacing:0.05em;">UniFi</div>
+              <div style="font-size:12px; color:#94a3b8; font-weight:600;
+                          text-transform:uppercase; letter-spacing:0.12em;">
+                Intelligence Hub</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        st.markdown("## UniFi Intelligence Hub")
         st.caption("Monitoramento e Auditoria Avançada")
         st.divider()
 
@@ -63,7 +72,9 @@ def _sidebar() -> str:
             "Navegação",
             options=[
                 "🏠 Visão Geral",
-                "🚫 Painel do Infrator",
+                "📡 Dispositivos",
+                "🖧 Infraestrutura",
+                "🚫 Infratores",
                 "🛡️ Segurança",
                 "📊 Relatórios",
             ],
@@ -93,12 +104,17 @@ def _sidebar() -> str:
 # Main
 # ------------------------------------------------------------------
 def main() -> None:
+    inject_css()
     db   = _get_db()
     page = _sidebar()
 
     if page == "🏠 Visão Geral":
         overview.render(db)
-    elif page == "🚫 Painel do Infrator":
+    elif page == "📡 Dispositivos":
+        devices.render(db)
+    elif page == "🖧 Infraestrutura":
+        infrastructure.render(db)
+    elif page == "🚫 Infratores":
         violators.render(db)
     elif page == "🛡️ Segurança":
         security.render(db)

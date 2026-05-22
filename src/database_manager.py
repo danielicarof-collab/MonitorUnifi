@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from src.models import (
-    Base, Client, CollectionState, DPITraffic,
-    FirewallBlock, Threat, VPNStatus, WANStatus,
+    Base, Client, ClientSnapshot, APStat, RogueAP,
+    CollectionState, DPITraffic, FirewallBlock, Threat, VPNStatus, WANStatus,
 )
 
 
@@ -53,6 +53,10 @@ class DatabaseManager:
             "ALTER TABLE firewall_blocks ADD COLUMN source     VARCHAR(20)",
             # raw_event_id ampliado para UUIDs (128 chars)
             # SQLite não suporta ALTER COLUMN — ignoramos silenciosamente
+            # v3 — device fingerprint fields
+            "ALTER TABLE clients ADD COLUMN device_type VARCHAR(50)",
+            "ALTER TABLE clients ADD COLUMN os_name VARCHAR(100)",
+            "ALTER TABLE clients ADD COLUMN dev_family VARCHAR(100)",
         ]
         with self._engine.connect() as conn:
             for sql in migrations:
@@ -81,11 +85,14 @@ class DatabaseManager:
                 client = Client(mac=mac, first_seen=datetime.utcnow())
                 sess.add(client)
 
-            client.name     = data.get("name") or data.get("alias") or client.name
-            client.hostname = data.get("hostname") or client.hostname
-            client.ip       = data.get("ip") or client.ip
-            client.vendor   = data.get("oui") or client.vendor
-            client.last_seen = datetime.utcnow()
+            client.name       = data.get("name") or data.get("alias") or client.name
+            client.hostname   = data.get("hostname") or client.hostname
+            client.ip         = data.get("ip") or client.ip
+            client.vendor     = data.get("oui") or client.vendor
+            client.device_type = data.get("device_type") or client.device_type
+            client.os_name    = data.get("os_name") or client.os_name
+            client.dev_family = data.get("dev_family") or client.dev_family
+            client.last_seen  = datetime.utcnow()
             sess.commit()
 
     def insert_wan_status(self, data: Dict[str, Any]) -> None:
@@ -490,15 +497,246 @@ class DatabaseManager:
             "action":      r.action_taken,
         } for r in rows])
 
+    # ------------------------------------------------------------------
+    # ClientSnapshot methods
+    # ------------------------------------------------------------------
+
+    def insert_client_snapshots(self, records: List[Dict[str, Any]]) -> None:
+        with self._session() as sess:
+            ts = datetime.utcnow()
+            for r in records:
+                sess.add(ClientSnapshot(
+                    timestamp     = ts,
+                    client_mac    = r["client_mac"],
+                    signal        = r.get("signal"),
+                    noise         = r.get("noise"),
+                    tx_rate       = r.get("tx_rate"),
+                    rx_rate       = r.get("rx_rate"),
+                    satisfaction  = r.get("satisfaction"),
+                    tx_bytes_rate = r.get("tx_bytes_rate"),
+                    rx_bytes_rate = r.get("rx_bytes_rate"),
+                    ap_mac        = r.get("ap_mac"),
+                    radio_band    = r.get("radio_band"),
+                    channel       = r.get("channel"),
+                    essid         = r.get("essid"),
+                    is_wired      = r.get("is_wired", False),
+                    uptime_sec    = r.get("uptime_sec"),
+                ))
+            sess.commit()
+
+    def get_latest_client_snapshots(self) -> pd.DataFrame:
+        """Snapshot mais recente de cada cliente."""
+        with self._session() as sess:
+            subq = (
+                sess.query(
+                    ClientSnapshot.client_mac,
+                    func.max(ClientSnapshot.timestamp).label("max_ts"),
+                )
+                .group_by(ClientSnapshot.client_mac)
+                .subquery()
+            )
+            rows = (
+                sess.query(ClientSnapshot, Client)
+                .join(subq, (ClientSnapshot.client_mac == subq.c.client_mac) &
+                            (ClientSnapshot.timestamp == subq.c.max_ts))
+                .outerjoin(Client, Client.mac == ClientSnapshot.client_mac)
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        result = []
+        for snap, client in rows:
+            result.append({
+                "mac":           snap.client_mac,
+                "name":          (client.name or client.hostname or snap.client_mac) if client else snap.client_mac,
+                "device_type":   client.device_type if client else "unknown",
+                "os_name":       client.os_name if client else None,
+                "vendor":        client.vendor if client else None,
+                "ip":            client.ip if client else None,
+                "signal":        snap.signal,
+                "noise":         snap.noise,
+                "tx_rate":       snap.tx_rate,
+                "rx_rate":       snap.rx_rate,
+                "satisfaction":  snap.satisfaction,
+                "tx_bytes_rate": snap.tx_bytes_rate,
+                "rx_bytes_rate": snap.rx_bytes_rate,
+                "ap_mac":        snap.ap_mac,
+                "radio_band":    snap.radio_band,
+                "channel":       snap.channel,
+                "essid":         snap.essid,
+                "is_wired":      snap.is_wired,
+                "uptime_sec":    snap.uptime_sec,
+                "timestamp":     snap.timestamp,
+            })
+        return pd.DataFrame(result)
+
+    def get_all_clients(self) -> pd.DataFrame:
+        """Todos os clientes conhecidos."""
+        with self._session() as sess:
+            rows = sess.query(Client).order_by(Client.last_seen.desc()).all()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "mac":           r.mac,
+            "name":          r.display_name(),
+            "ip":            r.ip,
+            "vendor":        r.vendor,
+            "device_type":   r.device_type or "unknown",
+            "os_name":       r.os_name,
+            "dev_family":    r.dev_family,
+            "first_seen":    r.first_seen,
+            "last_seen":     r.last_seen,
+            "is_suspicious": r.is_suspicious,
+            "total_blocks":  r.total_blocks,
+        } for r in rows])
+
+    def get_device_type_counts(self) -> pd.DataFrame:
+        with self._session() as sess:
+            rows = (
+                sess.query(Client.device_type, func.count(Client.id).label("count"))
+                .group_by(Client.device_type)
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame(columns=["device_type", "count"])
+        return pd.DataFrame(rows, columns=["device_type", "count"])
+
+    def get_top_bandwidth_consumers(self, limit: int = 10) -> pd.DataFrame:
+        """Top clientes por taxa de bytes atual (snapshot mais recente de cada um)."""
+        df = self.get_latest_client_snapshots()
+        if df.empty:
+            return pd.DataFrame()
+        df["total_rate"] = (df["tx_bytes_rate"].fillna(0) + df["rx_bytes_rate"].fillna(0))
+        return df.nlargest(limit, "total_rate")[
+            ["mac", "name", "device_type", "ip",
+             "tx_bytes_rate", "rx_bytes_rate", "total_rate",
+             "radio_band", "essid"]
+        ]
+
+    # ------------------------------------------------------------------
+    # APStat methods
+    # ------------------------------------------------------------------
+
+    def insert_ap_stat(self, data: Dict[str, Any]) -> None:
+        with self._session() as sess:
+            sess.add(APStat(
+                timestamp       = data.get("timestamp", datetime.utcnow()),
+                mac             = data["mac"],
+                name            = data.get("name"),
+                model           = data.get("model"),
+                ip              = data.get("ip"),
+                num_clients     = data.get("num_clients", 0),
+                num_clients_24g = data.get("num_clients_24g", 0),
+                num_clients_5g  = data.get("num_clients_5g", 0),
+                num_clients_6g  = data.get("num_clients_6g", 0),
+                tx_bytes_rate   = data.get("tx_bytes_rate"),
+                rx_bytes_rate   = data.get("rx_bytes_rate"),
+                satisfaction    = data.get("satisfaction"),
+                uptime_sec      = data.get("uptime_sec"),
+                channel_24g     = data.get("channel_24g"),
+                channel_5g      = data.get("channel_5g"),
+            ))
+            sess.commit()
+
+    def get_latest_ap_stats(self) -> pd.DataFrame:
+        with self._session() as sess:
+            subq = (
+                sess.query(APStat.mac, func.max(APStat.timestamp).label("max_ts"))
+                .group_by(APStat.mac)
+                .subquery()
+            )
+            rows = (
+                sess.query(APStat)
+                .join(subq, (APStat.mac == subq.c.mac) & (APStat.timestamp == subq.c.max_ts))
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "mac":             r.mac,
+            "name":            r.name or r.mac,
+            "model":           r.model,
+            "ip":              r.ip,
+            "num_clients":     r.num_clients,
+            "num_clients_24g": r.num_clients_24g,
+            "num_clients_5g":  r.num_clients_5g,
+            "num_clients_6g":  r.num_clients_6g,
+            "tx_bytes_rate":   r.tx_bytes_rate,
+            "rx_bytes_rate":   r.rx_bytes_rate,
+            "satisfaction":    r.satisfaction,
+            "uptime_sec":      r.uptime_sec,
+            "channel_24g":     r.channel_24g,
+            "channel_5g":      r.channel_5g,
+            "timestamp":       r.timestamp,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # RogueAP methods
+    # ------------------------------------------------------------------
+
+    def upsert_rogue_ap(self, data: Dict[str, Any]) -> None:
+        bssid = data.get("bssid", "").lower()
+        if not bssid:
+            return
+        with self._session() as sess:
+            rec = sess.query(RogueAP).filter_by(bssid=bssid).first()
+            if rec is None:
+                rec = RogueAP(bssid=bssid, first_seen=datetime.utcnow())
+                sess.add(rec)
+            rec.ssid      = data.get("ssid")
+            rec.channel   = data.get("channel")
+            rec.signal    = data.get("signal")
+            rec.security  = data.get("security")
+            rec.is_rogue  = data.get("is_rogue", True)
+            rec.ap_mac    = data.get("ap_mac")
+            rec.last_seen = datetime.utcnow()
+            sess.commit()
+
+    def get_rogue_aps(self) -> pd.DataFrame:
+        with self._session() as sess:
+            rows = sess.query(RogueAP).order_by(RogueAP.last_seen.desc()).all()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "bssid":      r.bssid,
+            "ssid":       r.ssid or "—",
+            "channel":    r.channel,
+            "signal":     r.signal,
+            "security":   r.security or "—",
+            "is_rogue":   r.is_rogue,
+            "ap_mac":     r.ap_mac,
+            "first_seen": r.first_seen,
+            "last_seen":  r.last_seen,
+        } for r in rows])
+
+    def get_online_clients_count(self, minutes: int = 5) -> int:
+        """Conta clientes com snapshot nos últimos N minutos."""
+        cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+        with self._session() as sess:
+            subq = (
+                sess.query(func.max(ClientSnapshot.timestamp).label("max_ts"))
+                .group_by(ClientSnapshot.client_mac)
+                .subquery()
+            )
+            count = (
+                sess.query(func.count())
+                .select_from(subq)
+                .filter(subq.c.max_ts >= cutoff)
+                .scalar()
+            ) or 0
+        return count
+
     def get_summary_stats(self, days: int = 30) -> Dict[str, int]:
         since = datetime.utcnow() - timedelta(days=days)
         with self._session() as sess:
-            return {
+            stats = {
                 "total_blocks":       sess.query(func.count(FirewallBlock.id)).filter(FirewallBlock.timestamp >= since).scalar() or 0,
                 "unique_violators":   sess.query(func.count(func.distinct(FirewallBlock.client_mac))).filter(FirewallBlock.timestamp >= since).scalar() or 0,
                 "total_threats":      sess.query(func.count(Threat.id)).filter(Threat.timestamp >= since).scalar() or 0,
                 "suspicious_devices": sess.query(func.count(Client.id)).filter_by(is_suspicious=True).scalar() or 0,
             }
+        stats["online_devices"] = self.get_online_clients_count(minutes=5)
+        return stats
 
     def get_client_name(self, mac: str) -> Optional[str]:
         with self._session() as sess:

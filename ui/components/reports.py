@@ -215,10 +215,23 @@ def generate_pdf(
         f"Durante o mês de {period}, a rede registrou {stats['total_blocks']} tentativas de acesso "
         f"bloqueadas oriundas de {stats['unique_violators']} dispositivos distintos. "
         f"O sistema de detecção de ameaças (IPS/IDS) registrou {stats['total_threats']} eventos. "
-        f"A disponibilidade do link WAN principal foi de {uptime_str}.",
+        f"A disponibilidade do link WAN principal foi de {uptime_str}. "
+        f"Há {stats.get('online_devices', 0)} dispositivo(s) online no momento da geração.",
         ln=True,
     )
     pdf.ln(4)
+
+    # -- Device type breakdown --
+    try:
+        type_df = db.get_device_type_counts()
+        if not type_df.empty:
+            pdf.section_title("1b. Distribuição de Dispositivos por Tipo")
+            type_df_display = type_df.copy()
+            type_df_display.columns = ["Tipo de Dispositivo", "Quantidade"]
+            type_df_display["Tipo de Dispositivo"] = type_df_display["Tipo de Dispositivo"].fillna("unknown")
+            pdf.data_table(type_df_display, col_widths=[95, 95])
+    except Exception:
+        pass
 
     # -- WAN Uptime section --
     pdf.section_title("2. Disponibilidade WAN — Mês de Referência")

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from src.database_manager import DatabaseManager
+from ui.components.theme import metric_card, plotly_dark_layout
 
 _RULE_TYPE_LABELS = {
     "traffic_rule":  "🟠 Regra de Tráfego (App/DPI)",
@@ -38,7 +40,8 @@ def render(db: DatabaseManager) -> None:
     # Filters
     # ------------------------------------------------------------------
     col_days, col_limit, _ = st.columns([1, 1, 2])
-    days  = col_days.selectbox("Período", [7, 14, 30, 90], index=2, format_func=lambda x: f"{x} dias")
+    days  = col_days.selectbox("Período", [7, 14, 30, 90], index=2,
+                               format_func=lambda x: f"{x} dias")
     limit = col_limit.selectbox("Top N", [5, 10, 20], index=1)
 
     # ------------------------------------------------------------------
@@ -53,30 +56,37 @@ def render(db: DatabaseManager) -> None:
     df["label"] = df.apply(
         lambda r: r["name"] or r["mac"] or "Desconhecido", axis=1
     )
-    df = df.sort_values("total_blocks", ascending=True)
+    df_sorted = df.sort_values("total_blocks", ascending=True)
 
-    fig = px.bar(
-        df,
-        x="total_blocks",
-        y="label",
-        orientation="h",
-        color="total_blocks",
-        color_continuous_scale="Reds",
-        labels={"total_blocks": "Bloqueios", "label": "Dispositivo"},
-        title=f"Top {limit} Infratores — últimos {days} dias",
-        text="total_blocks",
-    )
-    fig.update_traces(textposition="outside")
-    fig.update_layout(
-        showlegend=False,
-        coloraxis_showscale=False,
-        height=max(300, len(df) * 40 + 80),
-        margin=dict(l=10, r=30, t=50, b=20),
-    )
+    # Dark theme bar chart
+    fig = go.Figure(go.Bar(
+        x            = df_sorted["total_blocks"],
+        y            = df_sorted["label"],
+        orientation  = "h",
+        marker=dict(
+            color     = df_sorted["total_blocks"],
+            colorscale= [[0.0, "#582020"], [0.5, "#c0392b"], [1.0, "#ff4d4d"]],
+            showscale = False,
+        ),
+        text         = df_sorted["total_blocks"],
+        textposition = "outside",
+        textfont     = {"color": "#e2e8f0"},
+        hovertemplate="<b>%{y}</b><br>Bloqueios: %{x}<extra></extra>",
+    ))
+
+    layout = plotly_dark_layout()
+    layout.update({
+        "title":  f"Top {limit} Infratores — últimos {days} dias",
+        "height": max(300, len(df_sorted) * 40 + 100),
+        "xaxis":  {"title": "Bloqueios", "gridcolor": "#1e3a5f", "zerolinecolor": "#1e3a5f"},
+        "yaxis":  {"gridcolor": "rgba(0,0,0,0)", "zerolinecolor": "#1e3a5f"},
+        "margin": {"l": 10, "r": 60, "t": 50, "b": 20},
+    })
+    fig.update_layout(**layout)
     st.plotly_chart(fig, use_container_width=True)
 
     # ------------------------------------------------------------------
-    # Ranking detail table
+    # Ranking detail table with column config
     # ------------------------------------------------------------------
     st.subheader("Detalhes do Ranking")
 
@@ -88,7 +98,21 @@ def render(db: DatabaseManager) -> None:
         "last_seen":    "Último Bloqueio",
     }).sort_values("Bloqueios", ascending=False)
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    max_blocks = int(display_df["Bloqueios"].max()) if not display_df.empty else 1
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Bloqueios": st.column_config.ProgressColumn(
+                "Bloqueios",
+                min_value=0,
+                max_value=max_blocks,
+                format="%d",
+            ),
+        },
+    )
 
     st.divider()
 
@@ -102,15 +126,26 @@ def render(db: DatabaseManager) -> None:
         col_pie, col_cat_table = st.columns([1, 1])
 
         with col_pie:
-            fig2 = px.pie(
-                cat_df,
-                names="category",
-                values="count",
-                color_discrete_sequence=px.colors.qualitative.Set3,
-                hole=0.4,
-            )
-            fig2.update_traces(textposition="inside", textinfo="percent+label")
-            fig2.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
+            fig2 = go.Figure(go.Pie(
+                labels       = cat_df["category"],
+                values       = cat_df["count"],
+                hole         = 0.45,
+                textinfo     = "percent+label",
+                textposition = "inside",
+                insidetextorientation="radial",
+                marker=dict(
+                    colors = px.colors.qualitative.Dark24[:len(cat_df)],
+                    line   = dict(color="#0d1117", width=2),
+                ),
+                hovertemplate="<b>%{label}</b><br>%{value} bloqueios<br>%{percent}<extra></extra>",
+            ))
+            layout2 = plotly_dark_layout()
+            layout2.update({
+                "showlegend": False,
+                "height":     340,
+                "margin":     {"t": 10, "b": 10, "l": 10, "r": 10},
+            })
+            fig2.update_layout(**layout2)
             st.plotly_chart(fig2, use_container_width=True)
 
         with col_cat_table:
@@ -118,6 +153,9 @@ def render(db: DatabaseManager) -> None:
                 cat_df.rename(columns={"category": "Categoria", "count": "Bloqueios"}),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Bloqueios": st.column_config.NumberColumn("Bloqueios", format="%d"),
+                },
             )
 
     st.divider()

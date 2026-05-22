@@ -77,9 +77,12 @@ class DataCollector:
         try:
             self._api.discover_site()
             self._sync_clients()
+            self._collect_client_snapshots()
             self._collect_wan_status()
             self._process_events()
             self._collect_dpi()
+            self._collect_ap_stats()
+            self._collect_rogue_aps()
             self._audit.run()
         except Exception as exc:
             logger.exception("Unhandled error in collection cycle: {}", exc)
@@ -129,6 +132,15 @@ class DataCollector:
                 merged.setdefault(mac, {}).update(c)
 
         for mac, data in merged.items():
+            # Enrich data with device fingerprint before upsert
+            data["device_type"] = AuditEngine.infer_device_type(
+                dev_cat  = data.get("dev_cat", ""),
+                vendor   = data.get("oui", ""),
+                hostname = data.get("hostname", ""),
+                os_name  = data.get("os_name", ""),
+            )
+            data["os_name"]    = data.get("os_name") or data.get("os_class")
+            data["dev_family"] = data.get("dev_family") or data.get("dev_cat")
             self._db.upsert_client(data)
 
         self._client_map = self._db.get_all_clients_map()
@@ -576,6 +588,112 @@ class DataCollector:
             "description":  event.get("msg") or event.get("message"),
             "action_taken": event.get("action") or event.get("action_taken"),
         })
+
+    # ------------------------------------------------------------------
+    # Step 2b: Client snapshots (radio/wired stats per active client)
+    # ------------------------------------------------------------------
+
+    def _collect_client_snapshots(self) -> None:
+        active = self._api.get_active_clients()
+        records = []
+        _RADIO_MAP = {"ng": "2.4 GHz", "na": "5 GHz", "6e": "6 GHz"}
+        for c in active:
+            mac = (c.get("mac") or "").lower()
+            if not mac:
+                continue
+            is_wired = bool(c.get("is_wired", False))
+            radio_raw = c.get("radio", "")
+            radio_band = "Wired" if is_wired else _RADIO_MAP.get(radio_raw, radio_raw or "Wi-Fi")
+            tx_rate_kbps = c.get("tx_rate")
+            rx_rate_kbps = c.get("rx_rate")
+            records.append({
+                "client_mac":    mac,
+                "signal":        c.get("signal"),
+                "noise":         c.get("noise"),
+                "tx_rate":       (tx_rate_kbps / 1000) if tx_rate_kbps else None,
+                "rx_rate":       (rx_rate_kbps / 1000) if rx_rate_kbps else None,
+                "satisfaction":  c.get("satisfaction"),
+                "tx_bytes_rate": c.get("tx_bytes-r"),
+                "rx_bytes_rate": c.get("rx_bytes-r"),
+                "ap_mac":        (c.get("ap_mac") or "").lower() or None,
+                "radio_band":    radio_band,
+                "channel":       c.get("channel"),
+                "essid":         c.get("essid"),
+                "is_wired":      is_wired,
+                "uptime_sec":    c.get("uptime"),
+            })
+        if records:
+            self._db.insert_client_snapshots(records)
+            logger.debug("Client snapshots saved: {} entries", len(records))
+
+    # ------------------------------------------------------------------
+    # Step 5b: AP stats snapshot
+    # ------------------------------------------------------------------
+
+    def _collect_ap_stats(self) -> None:
+        devices = self._api.get_devices()
+        ts = datetime.utcnow()
+        count = 0
+        for dev in devices:
+            mac = (dev.get("mac") or "").lower()
+            if not mac:
+                continue
+            radio_stats = dev.get("radio_table_stats") or dev.get("radio_table") or []
+            clients_24g = clients_5g = clients_6g = 0
+            channel_24g = channel_5g = None
+            for radio in radio_stats:
+                name = radio.get("name", "")
+                n_sta = radio.get("num_sta") or radio.get("user-num_sta", 0)
+                ch = radio.get("channel")
+                if name == "ng":
+                    clients_24g = n_sta
+                    channel_24g = ch
+                elif name == "na":
+                    clients_5g = n_sta
+                    channel_5g = ch
+                elif name in ("6e", "6g"):
+                    clients_6g = n_sta
+            self._db.insert_ap_stat({
+                "timestamp":       ts,
+                "mac":             mac,
+                "name":            dev.get("name") or dev.get("hostname"),
+                "model":           dev.get("model"),
+                "ip":              dev.get("ip"),
+                "num_clients":     dev.get("num_sta", 0),
+                "num_clients_24g": clients_24g,
+                "num_clients_5g":  clients_5g,
+                "num_clients_6g":  clients_6g,
+                "tx_bytes_rate":   dev.get("tx_bytes-r"),
+                "rx_bytes_rate":   dev.get("rx_bytes-r"),
+                "satisfaction":    dev.get("satisfaction"),
+                "uptime_sec":      dev.get("uptime"),
+                "channel_24g":     channel_24g,
+                "channel_5g":      channel_5g,
+            })
+            count += 1
+        logger.debug("AP stats saved: {} devices", count)
+
+    # ------------------------------------------------------------------
+    # Step 5c: Rogue AP scan
+    # ------------------------------------------------------------------
+
+    def _collect_rogue_aps(self) -> None:
+        rogue_list = self._api.get_rogue_aps()
+        for r in rogue_list:
+            bssid = (r.get("bssid") or r.get("mac") or "").lower()
+            if not bssid:
+                continue
+            self._db.upsert_rogue_ap({
+                "bssid":    bssid,
+                "ssid":     r.get("ssid"),
+                "channel":  r.get("channel"),
+                "signal":   r.get("rssi") or r.get("signal"),
+                "security": r.get("security") or r.get("security_proto"),
+                "is_rogue": r.get("is_rogue", False),
+                "ap_mac":   (r.get("ap_mac") or "").lower() or None,
+            })
+        if rogue_list:
+            logger.debug("Rogue APs updated: {} entries", len(rogue_list))
 
     # ------------------------------------------------------------------
     # Step 4: DPI traffic snapshot
