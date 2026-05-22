@@ -2,14 +2,19 @@
 Native HTTP client para UniFi Network API (UDM-Pro / UDM / CloudKey).
 
 Suporta múltiplas versões do UniFi Network Application:
-  - API v1       (/proxy/network/api/s/{site}/...)          — firmware legado
-  - API v2       (/proxy/network/v2/api/site/{site}/...)    — firmware 8.4+
-  - System-Log   (/proxy/network/v2/api/site/{site}/system-log/all)
-                                                            — UniFi OS 3.x+ (firmware 8.x+)
+  - API v1            (/proxy/network/api/s/{site}/...)           — firmware legado
+  - API v2            (/proxy/network/v2/api/site/{site}/...)     — firmware 8.4+
+  - Integrations v1   (/proxy/network/integrations/v1/sites/...) — UniFi OS 5.x+ / Network 10.x+
+  - System-Log        (/proxy/network/v2/api/site/{site}/system-log/all)
+                                                                   — UniFi OS 3.x+ (firmware 8.x+)
 
-Autenticação:
-  - Cookie TOKEN (JWT) + csrfToken extraído do payload do JWT  (UniFi OS 3.x+)
-  - Cookie csrf_token separado                                  (UniFi OS ≤ 2.x)
+Autenticação (em ordem de preferência):
+  - API Key via header X-API-Key                                   (UniFi OS 5.x+ / Network 10.x+)
+    → Gerada em: UniFi OS → Settings → API → Create API Key
+    → Não requer login/logout, não está sujeita a rate-limit (429)
+    → Necessária para endpoints /proxy/network/integrations/v1/...
+  - Cookie TOKEN (JWT) + csrfToken extraído do payload do JWT      (UniFi OS 3.x+)
+  - Cookie csrf_token separado                                      (UniFi OS ≤ 2.x)
 
 O cliente detecta automaticamente o site, extrai o CSRF do JWT e faz
 fallback transparente entre endpoints para compatibilidade máxima.
@@ -61,16 +66,22 @@ class UniFiAPIClient:
     def __init__(
         self,
         host: str,
-        username: str,
-        password: str,
+        username: str = "",
+        password: str = "",
         site: str = "default",
         verify_ssl: bool = False,
+        api_key: Optional[str] = None,
     ) -> None:
         self.host       = host.rstrip("/")
         self.username   = username
         self.password   = password
         self.site       = site          # pode ser atualizado por discover_site()
         self.verify_ssl = verify_ssl
+
+        # API Key (UniFi OS 5.x+ / Network 10.x+)
+        # Quando presente, substitui autenticação por cookie/CSRF completamente.
+        self._api_key: Optional[str] = api_key.strip() if api_key else None
+        self._use_api_key: bool      = bool(self._api_key)
 
         self._session        = requests.Session()
         self._session.verify = verify_ssl
@@ -88,6 +99,11 @@ class UniFiAPIClient:
     def _base_v2(self) -> str:
         """API v2 — introduzida no UniFi Network 8.4+."""
         return f"{self.host}/proxy/network/v2/api/site/{self.site}"
+
+    @property
+    def _base_integrations_v1(self) -> str:
+        """Integrations API v1 — UniFi OS 5.x+ / Network 10.x+. Requer API Key."""
+        return f"{self.host}/proxy/network/integrations/v1/sites/{self.site}"
 
     # ── autenticação ─────────────────────────────────────────────────
 
@@ -118,6 +134,12 @@ class UniFiAPIClient:
     def login(self) -> bool:
         # Não tenta novo login se já está autenticado
         if self._authenticated:
+            return True
+
+        # Com API Key, não há login por cookie — apenas marca como autenticado
+        if self._use_api_key:
+            self._authenticated = True
+            logger.info("API Key authentication ativo — sem login por cookie necessário.")
             return True
 
         url     = f"{self.host}/api/auth/login"
@@ -161,6 +183,11 @@ class UniFiAPIClient:
             return False
 
     def logout(self) -> None:
+        if self._use_api_key:
+            # API Key não usa sessão por cookie — sem requisição de logout necessária
+            self._authenticated = False
+            logger.info("API Key session encerrada (sem requisição de logout).")
+            return
         try:
             self._session.post(f"{self.host}/api/auth/logout", timeout=5)
         except Exception:
@@ -175,10 +202,48 @@ class UniFiAPIClient:
         """
         Retorna o nome/ID real do primeiro site acessível.
 
-        Tenta vários endpoints de listagem de sites suportados em
-        diferentes versões do UniFi Network Application.
+        Quando API Key está configurada, usa o endpoint de integrations.
+        Caso contrário, tenta vários endpoints legados em ordem.
         Atualiza self.site se encontrar algo diferente de 'default'.
         """
+        if not self._authenticated:
+            self.login()
+
+        # ── Modo API Key: usa endpoint de integrations ────────────────
+        if self._use_api_key:
+            url = f"{self.host}/proxy/network/integrations/v1/sites"
+            resp = self._get_raw(url)
+            if resp and resp.status_code == 200:
+                try:
+                    body  = resp.json()
+                    sites = body.get("data", body)
+                    if isinstance(sites, list) and sites:
+                        first = sites[0]
+                        name  = (
+                            first.get("name")
+                            or first.get("id")
+                            or first.get("_id")
+                            or "default"
+                        )
+                        if name and name != self.site:
+                            logger.info(
+                                "Site auto-detectado via API Key: '{}' → '{}'.",
+                                self.site, name,
+                            )
+                            self.site = name
+                        else:
+                            logger.info("Site confirmado via API Key: '{}'", self.site)
+                        all_names = [s.get("name") or s.get("id") or "?" for s in sites]
+                        logger.debug("Sites disponíveis (integrations): {}", all_names)
+                        return self.site
+                except Exception:
+                    pass
+            logger.warning(
+                "Não foi possível listar sites via API Key — mantendo '{}'.", self.site
+            )
+            return self.site
+
+        # ── Modo legado: cookie/CSRF ──────────────────────────────────
         candidates = [
             # v1 — clássico
             f"{self.host}/proxy/network/api/self/sites",
@@ -187,9 +252,6 @@ class UniFiAPIClient:
             # legacy (controladores não-UDM)
             f"{self.host}/api/self/sites",
         ]
-
-        if not self._authenticated:
-            self.login()
 
         headers = {"Content-Type": "application/json"}
         if self._csrf_token:
@@ -240,7 +302,10 @@ class UniFiAPIClient:
 
     def _headers(self) -> Dict[str, str]:
         h = {"Content-Type": "application/json"}
-        if self._csrf_token:
+        if self._use_api_key:
+            # Autenticação via API Key (UniFi OS 5.x+ / Network 10.x+)
+            h["X-API-Key"] = self._api_key
+        elif self._csrf_token:
             h["X-Csrf-Token"] = self._csrf_token
         return h
 
@@ -337,6 +402,54 @@ class UniFiAPIClient:
             body = resp.json()
             return body.get("data", body)
         except Exception:
+            return None
+
+    def _request_integrations(self, endpoint: str, **kwargs) -> Optional[Any]:
+        """
+        Requisição via Integrations API v1 (UniFi OS 5.x+ / Network 10.x+).
+
+        Base: /proxy/network/integrations/v1/sites/{siteId}{endpoint}
+        Requer API Key (header X-API-Key). Funciona também com sessão de cookie,
+        mas o uso primário é com api_key configurada.
+
+        Retorna o campo 'data' do JSON, ou None em caso de erro/ausência.
+        """
+        if not self._authenticated:
+            if not self.login():
+                return None
+
+        url = f"{self._base_integrations_v1}{endpoint}"
+        try:
+            resp = self._session.get(url, headers=self._headers(), timeout=30, **kwargs)
+            if resp.status_code == 401:
+                if self._use_api_key:
+                    logger.error("API Key inválida ou sem permissão para {} (401).", endpoint)
+                    return None
+                logger.warning("Sessão expirada (integrations) — re-autenticando…")
+                self._authenticated = False
+                if not self.login():
+                    return None
+                resp = self._session.get(url, headers=self._headers(), timeout=30, **kwargs)
+            if resp.status_code == 404:
+                logger.debug("Integrations endpoint ausente: {} — firmware não suportado?", endpoint)
+                return None
+            if resp.status_code == 403:
+                logger.warning(
+                    "403 Forbidden em {} — API Key sem permissão ou endpoint requer acesso especial.",
+                    endpoint,
+                )
+                return None
+            resp.raise_for_status()
+            body = resp.json()
+            return body.get("data", body)
+        except requests.Timeout:
+            logger.warning("Timeout em integrations GET {}", endpoint)
+            return None
+        except requests.RequestException as exc:
+            logger.error("Integrations API error [{}]: {}", endpoint, exc)
+            return None
+        except ValueError as exc:
+            logger.error("JSON parse error em integrations {}: {}", endpoint, exc)
             return None
 
     def _request_with_fallback(
@@ -525,31 +638,21 @@ class UniFiAPIClient:
         report: Dict[str, Any] = {
             "host":            self.host,
             "site_configured": self.site,
+            "auth_mode":       "api_key" if self._use_api_key else "cookie",
             "authenticated":   self._authenticated,
             "endpoints":       {},
         }
 
         if not ok:
             report["site_discovered"] = self.site
-            # Preenche todos os endpoints como não testados
             for label in ["health","clients","known_clients","dpi",
-                          "events_v1","events_v2","alarms_v1","alarms_v2","devices"]:
+                          "events_v1","devices","integrations_devices",
+                          "integrations_networks"]:
                 report["endpoints"][label] = "NÃO TESTADO (falha no login)"
             return report
 
         # Testa listagem de sites (reutiliza sessão já autenticada)
         report["site_discovered"] = self.discover_site()
-
-        # ── Endpoints GET ────────────────────────────────────────────────
-        get_tests: List[Tuple[str, str]] = [
-            ("health",        f"{self._base_v1}/stat/health"),
-            ("clients",       f"{self._base_v1}/stat/sta"),
-            ("known_clients", f"{self._base_v1}/rest/user"),
-            ("dpi",           f"{self._base_v1}/stat/dpi"),
-            ("devices",       f"{self._base_v1}/stat/device"),
-            ("events_v1",     f"{self._base_v1}/stat/event?_limit=5"),
-            ("alarms_v1",     f"{self._base_v1}/stat/alarm"),
-        ]
 
         def _classify_get(resp: Optional[requests.Response]) -> str:
             if resp is None:
@@ -576,8 +679,28 @@ class UniFiAPIClient:
                 return "404 NOT FOUND"
             return str(resp.status_code)
 
-        for label, url in get_tests:
+        # ── Endpoints legados (v1) ───────────────────────────────────────
+        legacy_tests: List[Tuple[str, str]] = [
+            ("health",        f"{self._base_v1}/stat/health"),
+            ("clients",       f"{self._base_v1}/stat/sta"),
+            ("known_clients", f"{self._base_v1}/rest/user"),
+            ("dpi",           f"{self._base_v1}/stat/dpi"),
+            ("devices",       f"{self._base_v1}/stat/device"),
+            ("events_v1",     f"{self._base_v1}/stat/event?_limit=5"),
+            ("alarms_v1",     f"{self._base_v1}/stat/alarm"),
+        ]
+        for label, url in legacy_tests:
             report["endpoints"][label] = _classify_get(self._get_raw(url))
+
+        # ── Integrations API v1 (API Key) ────────────────────────────────
+        integrations_tests: List[Tuple[str, str]] = [
+            ("integrations_sites",    f"{self.host}/proxy/network/integrations/v1/sites"),
+            ("integrations_devices",  f"{self._base_integrations_v1}/devices"),
+            ("integrations_networks", f"{self._base_integrations_v1}/networks"),
+        ]
+        for label, url in integrations_tests:
+            resp = self._get_raw(url)
+            report["endpoints"][label] = _classify_get(resp)
 
         # ── System-Log (POST) ─────────────────────────────────────────
         for cat in ("SECURITY", "VPN", "INTERNET_AND_WAN"):
@@ -608,52 +731,83 @@ class UniFiAPIClient:
     def is_threat_event(event_key: str) -> bool:
         return any(event_key.startswith(p) for p in THREAT_EVENT_KEYS)
 
-    # ── Device Statistics (v10.3.58) ────────────────────────────────────
+    # ── Device Statistics (Integrations API v1 / Network 10.x+) ─────────
 
     def get_device_statistics(self, device_id: str) -> Optional[Dict[str, Any]]:
         """
         Obtém estatísticas detalhadas de um dispositivo UniFi.
-        Endpoint: /v1/sites/{siteId}/devices/{deviceId}/statistics/latest
-        
-        Retorna:
-          - uptimeSec, cpuUtilizationPct, memoryUtilizationPct
-          - loadAverage1Min, loadAverage5Min, loadAverage15Min
-          - txRateBps, rxRateBps
-          - interfaces (radios com frequencyGHz, txRetriesPct)
+
+        Prioridade:
+          1. Integrations API v1  → /proxy/network/integrations/v1/sites/{site}/devices/{id}/statistics/latest
+             Requer API Key. Retorna: uptimeSec, cpuUtilizationPct, memoryUtilizationPct,
+             loadAverage1/5/15Min, interfaces.radios[].frequencyGHz/txRetriesPct
+          2. Legacy v1            → /proxy/network/api/s/{site}/stat/device/{id}
+             Funciona com autenticação por cookie.
         """
-        endpoint = f"/stat/device/{device_id}"
-        return self._request("GET", endpoint)
+        # Tentativa via Integrations API (requer api_key ou sessão com permissão)
+        if self._use_api_key:
+            result = self._request_integrations(f"/devices/{device_id}/statistics/latest")
+            if result is not None:
+                # Integrations API pode retornar dict direto ou lista com 1 elemento
+                return result if isinstance(result, dict) else (result[0] if result else None)
+
+        # Fallback: endpoint legado v1
+        result = self._request("GET", f"/stat/device/{device_id}")
+        return result if isinstance(result, dict) else None
 
     def get_all_devices_statistics(self) -> List[Dict[str, Any]]:
         """
         Obtém estatísticas para TODOS os dispositivos adotados.
-        Endpoint: /v1/sites/{siteId}/stat/device
+
+        Prioridade:
+          1. Integrations API v1  → /proxy/network/integrations/v1/sites/{site}/devices
+             Quando API Key configurada.
+          2. Legacy v1            → /proxy/network/api/s/{site}/stat/device
+             Fallback para firmware antigo ou autenticação por cookie.
         """
-        endpoint = "/stat/device"
-        result = self._request("GET", endpoint)
+        if self._use_api_key:
+            result = self._request_integrations("/devices")
+            if result is not None:
+                return result if isinstance(result, list) else []
+
+        result = self._request("GET", "/stat/device")
         return result if isinstance(result, list) else []
 
-    # ── Network Statistics (v10.3.58) ────────────────────────────────────
+    # ── Network Statistics (Integrations API v1 / Network 10.x+) ────────
 
     def get_networks(self) -> List[Dict[str, Any]]:
         """
         Obtém informações sobre todas as redes configuradas.
-        Endpoint: /v1/sites/{siteId}/rest/networkconf
-        
-        Retorna lista com:
-          - name, ip_subnet, num_clients, up_bytes, down_bytes
+
+        Prioridade:
+          1. Integrations API v1  → /proxy/network/integrations/v1/sites/{site}/networks
+             Quando API Key configurada. Retorna: name, ipSubnet, numClients,
+             upBytes, downBytes, upBytesRate, downBytesRate
+          2. Legacy v1            → /proxy/network/api/s/{site}/rest/networkconf
+             Fallback — retorna apenas configuração, sem métricas de tráfego.
         """
-        endpoint = "/rest/networkconf"
-        result = self._request("GET", endpoint)
+        if self._use_api_key:
+            result = self._request_integrations("/networks")
+            if result is not None:
+                return result if isinstance(result, list) else []
+
+        result = self._request("GET", "/rest/networkconf")
         return result if isinstance(result, list) else []
 
     def get_network_details(self, network_id: str) -> Optional[Dict[str, Any]]:
         """
         Obtém detalhes de uma rede específica.
-        Endpoint: /v1/sites/{siteId}/rest/networkconf/{networkId}
+
+        Prioridade:
+          1. Integrations API v1  → /proxy/network/integrations/v1/sites/{site}/networks/{id}
+          2. Legacy v1            → /proxy/network/api/s/{site}/rest/networkconf/{id}
         """
-        endpoint = f"/rest/networkconf/{network_id}"
-        return self._request("GET", endpoint)
+        if self._use_api_key:
+            result = self._request_integrations(f"/networks/{network_id}")
+            if result is not None:
+                return result if isinstance(result, dict) else None
+
+        return self._request("GET", f"/rest/networkconf/{network_id}")
 
     # ── Device Health & Performance ────────────────────────────────────
 

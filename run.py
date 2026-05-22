@@ -51,23 +51,42 @@ def _build_db():
 
 def _build_api():
     from src.api_client import UniFiAPIClient
-    host       = os.getenv("UNIFI_HOST")
-    username   = os.getenv("UNIFI_USERNAME")
-    password   = os.getenv("UNIFI_PASSWORD")
+    host       = os.getenv("UNIFI_HOST", "").strip()
+    api_key    = os.getenv("UNIFI_API_KEY", "").strip() or None
+    username   = os.getenv("UNIFI_USERNAME", "").strip()
+    password   = os.getenv("UNIFI_PASSWORD", "").strip()
     site       = os.getenv("UNIFI_SITE", "default")
     verify_ssl = os.getenv("UNIFI_VERIFY_SSL", "false").lower() == "true"
 
-    if not all([host, username, password]):
+    if not host:
         logger.error(
-            "Missing required environment variables: "
-            "UNIFI_HOST, UNIFI_USERNAME, UNIFI_PASSWORD.\n"
-            "Copy .env.example to .env and fill in your credentials."
+            "Variável UNIFI_HOST não definida.\n"
+            "Copie .env.example para .env e preencha com suas credenciais."
+        )
+        sys.exit(1)
+
+    if api_key:
+        # Modo moderno: API Key (UniFi OS 5.x+ / Network 10.x+)
+        logger.info("Modo de autenticação: API Key (UniFi OS 5.x+ / Network 10.x+)")
+    elif username and password:
+        # Modo legado: username + password por cookie de sessão
+        logger.info("Modo de autenticação: username/password (legado)")
+    else:
+        logger.error(
+            "Autenticação não configurada.\n"
+            "Defina UNIFI_API_KEY (recomendado para UniFi OS 5.x+) OU\n"
+            "defina UNIFI_USERNAME + UNIFI_PASSWORD (autenticação legada).\n"
+            "Copie .env.example para .env e preencha com suas credenciais."
         )
         sys.exit(1)
 
     return UniFiAPIClient(
-        host=host, username=username, password=password,
-        site=site, verify_ssl=verify_ssl,
+        host=host,
+        username=username,
+        password=password,
+        site=site,
+        verify_ssl=verify_ssl,
+        api_key=api_key,
     )
 
 
@@ -118,29 +137,65 @@ def cmd_diagnose() -> None:
     api    = _build_api()
     report = api.run_diagnostics()
 
+    auth_mode = report.get("auth_mode", "cookie")
+    auth_label = "API Key (UniFi OS 5.x+)" if auth_mode == "api_key" else "username/password (legado)"
+
     print(f"\n  Host        : {report['host']}")
+    print(f"  Auth        : {auth_label}")
     print(f"  Site (.env) : {report['site_configured']}")
     print(f"  Site real   : {report['site_discovered']}")
     print(f"  Autenticado : {'✅ Sim' if report['authenticated'] else '❌ Não'}")
-    print("\n  ── Endpoints ─────────────────────────────────────────")
 
-    ok_count   = 0
-    fail_count = 0
-    for ep, status in report["endpoints"].items():
+    # Endpoints legados
+    print("\n  ── Endpoints Legados (v1/v2) ─────────────────────────")
+    legacy_keys = ["health","clients","known_clients","dpi","devices",
+                   "events_v1","alarms_v1"]
+    ok_count = fail_count = 0
+    for ep in legacy_keys:
+        status = report["endpoints"].get(ep, "N/A")
         ok = status.startswith("OK")
         icon = "✅" if ok else "❌"
-        print(f"  {icon}  {ep:<20} {status}")
-        if ok:
-            ok_count += 1
-        else:
-            fail_count += 1
+        print(f"  {icon}  {ep:<22} {status}")
+        if ok: ok_count += 1
+        else:  fail_count += 1
+
+    # Endpoints de Integrations (API Key)
+    print("\n  ── Integrations API v1 (API Key) ─────────────────────")
+    integ_keys = ["integrations_sites","integrations_devices","integrations_networks"]
+    for ep in integ_keys:
+        status = report["endpoints"].get(ep, "N/A")
+        ok = status.startswith("OK")
+        icon = "✅" if ok else ("⚠️ " if auth_mode != "api_key" else "❌")
+        hint = " (requer UNIFI_API_KEY)" if (not ok and auth_mode != "api_key") else ""
+        print(f"  {icon}  {ep:<22} {status}{hint}")
+        if ok: ok_count += 1
+
+    # System-Log
+    print("\n  ── System-Log (firmware 8.x+) ────────────────────────")
+    for k, v in report["endpoints"].items():
+        if k.startswith("syslog_"):
+            ok = v.startswith("OK")
+            icon = "✅" if ok else "❌"
+            print(f"  {icon}  {k:<22} {v}")
+            if ok: ok_count += 1
+            else:  fail_count += 1
 
     print("\n  ── Diagnóstico ───────────────────────────────────────")
     syslog_ok = any(
         v.startswith("OK") for k, v in report["endpoints"].items()
         if k.startswith("syslog_")
     )
-    events_ok  = report["endpoints"].get("events_v1", "").startswith("OK")
+    events_ok      = report["endpoints"].get("events_v1", "").startswith("OK")
+    integrations_ok = report["endpoints"].get("integrations_devices", "").startswith("OK")
+
+    if auth_mode != "api_key":
+        print("  ℹ️  Dica: defina UNIFI_API_KEY no .env para usar a API Key")
+        print("     (UniFi OS 5.x+ / Network 10.x+) e acessar métricas avançadas.")
+
+    if integrations_ok:
+        print("  ✅ Integrations API v1 acessível — métricas avançadas de dispositivos e redes OK.")
+    elif auth_mode == "api_key":
+        print("  ❌ Integrations API não acessível — verifique se a API Key tem permissão.")
 
     if fail_count == 0 or (syslog_ok and ok_count >= 5):
         print("  ✅ Sistema pronto! Execute: python run.py collect-once")
