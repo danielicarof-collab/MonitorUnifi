@@ -155,7 +155,7 @@ class DataCollector:
         ts = datetime.utcnow()
 
         for subsystem in health_data:
-            sub = subsystem.get("subsystem", "")
+            sub = subsystem.get("subsystem", "").lower()
             if sub not in ("wan", "wan2"):
                 continue
 
