@@ -601,7 +601,18 @@ class DataCollector:
             mac = (c.get("mac") or "").lower()
             if not mac:
                 continue
-            is_wired = bool(c.get("is_wired", False))
+            _iw = c.get("is_wired")
+            if isinstance(_iw, bool):
+                is_wired = _iw
+            elif isinstance(_iw, int):
+                is_wired = _iw == 1
+            elif isinstance(_iw, str):
+                is_wired = _iw.lower() in ("1", "true", "yes")
+            else:
+                is_wired = False
+            # Presence of radio/essid is definitive proof of WiFi
+            if c.get("radio") or c.get("essid"):
+                is_wired = False
             radio_raw = c.get("radio", "")
             radio_band = "Wired" if is_wired else _RADIO_MAP.get(radio_raw, radio_raw or "Wi-Fi")
             tx_rate_kbps = c.get("tx_rate")
