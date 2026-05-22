@@ -136,11 +136,19 @@ class UniFiAPIClient:
         if self._authenticated:
             return True
 
-        # Com API Key, não há login por cookie — apenas marca como autenticado
-        if self._use_api_key:
+        # API Key sem username/password → não precisa de cookie, marca como autenticado
+        if self._use_api_key and not (self.username and self.password):
             self._authenticated = True
-            logger.info("API Key authentication ativo — sem login por cookie necessário.")
+            logger.info("API Key authentication ativo (sem credenciais de cookie configuradas).")
             return True
+
+        # Se username/password disponíveis → faz login por cookie
+        # Isso habilita endpoints legados v1/v2 e system-log (que não aceitam API Key).
+        # Quando api_key também está configurada, ela é usada em paralelo apenas
+        # para os endpoints de integrations via _headers_integrations().
+        if not (self.username and self.password):
+            logger.error("Sem credenciais para login. Configure UNIFI_API_KEY ou UNIFI_USERNAME+UNIFI_PASSWORD.")
+            return False
 
         url     = f"{self.host}/api/auth/login"
         payload = {"username": self.username, "password": self.password,

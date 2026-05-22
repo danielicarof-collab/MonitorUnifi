@@ -65,11 +65,11 @@ def _build_api():
         )
         sys.exit(1)
 
-    if api_key:
-        # Modo moderno: API Key (UniFi OS 5.x+ / Network 10.x+)
-        logger.info("Modo de autenticação: API Key (UniFi OS 5.x+ / Network 10.x+)")
+    if api_key and username and password:
+        logger.info("Modo de autenticação: API Key (integrations) + cookie (legado)")
+    elif api_key:
+        logger.info("Modo de autenticação: API Key apenas (UniFi OS 5.x+ / Network 10.x+)")
     elif username and password:
-        # Modo legado: username + password por cookie de sessão
         logger.info("Modo de autenticação: username/password (legado)")
     else:
         logger.error(
