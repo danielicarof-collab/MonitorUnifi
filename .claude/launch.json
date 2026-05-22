@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "unifi-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "demo", "-p", "3456", "--no-clipboard"],
+      "port": 3456
+    }
+  ]
+}

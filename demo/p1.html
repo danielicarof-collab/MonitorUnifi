@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Painel do Infrator — UniFi Hub</title>
+<style>
+:root{--bg:#f0f2f6;--card:#fff;--sidebar:#0e1117;--brand:#00c278;--navy:#00527a;--red:#ef4444;--text:#1a1a2e;--muted:#6c757d;--border:#e0e3eb;--sidebar-w:252px}
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif}
+body{display:flex;height:100vh;overflow:hidden;background:var(--bg);color:var(--text)}
+.sb{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar);display:flex;flex-direction:column;overflow-y:auto}
+.sb-head{padding:22px 18px 14px;border-bottom:1px solid #1e2130}
+.sb-logo{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.sb-icon{width:34px;height:34px;background:var(--brand);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.sb-title{color:#fff;font-size:14px;font-weight:700}
+.sb-sub{color:#8b92a5;font-size:10px;margin-top:1px}
+.sb-nav{padding:14px 10px 6px}
+.sb-lbl{color:#4a5568;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:0 8px;margin-bottom:5px}
+.nav{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:7px;color:#9ca3af;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:2px}
+.nav.on{background:#00527a22;color:var(--brand);font-weight:600}
+.nav-ic{font-size:15px;width:18px;text-align:center}
+.sb-hr{border:none;border-top:1px solid #1e2130;margin:8px 18px}
+.ref-btn{margin:6px 10px;padding:9px 12px;background:#1e2130;color:#9ca3af;border:1px solid #2a3050;border-radius:7px;font-size:12px;text-align:center}
+.sb-foot{padding:12px 18px 20px;margin-top:auto}
+.sb-foot p{color:#4a5568;font-size:10px;line-height:1.7}
+.sb-foot code{background:#1e2130;color:var(--brand);padding:1px 4px;border-radius:3px;font-size:10px}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{background:#fff;border-bottom:1px solid var(--border);padding:13px 26px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.topbar h1{font-size:18px;font-weight:700}
+.badges{display:flex;gap:8px}
+.badge{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.b-on{background:#dcfce7;color:#16a34a}.b-warn{background:#fee2e2;color:#dc2626}
+.content{flex:1;overflow-y:auto;padding:22px 26px}
+.card{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+.sec-h{display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px}
+.sec-h:first-child{margin-top:0}
+.sec-t{font-size:14px;font-weight:700}
+.sec-cap{font-size:11px;color:var(--muted)}
+select{padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff}
+.tw{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead{background:#f8f9fb}
+th{padding:9px 13px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+td{padding:9px 13px;border-bottom:1px solid #f0f2f6}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8f9fb}
+.mono{font-family:monospace;font-size:11px;color:var(--muted);background:#f0f2f6;padding:1px 5px;border-radius:4px}
+.bb{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:700;background:#fee2e2;color:#dc2626}
+.av{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.dc{display:flex;align-items:center;gap:8px}
+.dn2{font-weight:600;font-size:13px}
+.rt{background:#fff7ed;color:#c2410c;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.rf{background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.cc{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.cc h3{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+svg text{font-family:'Segoe UI',system-ui,sans-serif}
+</style>
+</head>
+<body>
+<aside class="sb">
+  <div class="sb-head">
+    <div class="sb-logo"><div class="sb-icon">🛡️</div><div><div class="sb-title">UniFi Intelligence Hub</div></div></div>
+    <div class="sb-sub">Monitoramento & Auditoria Avançada</div>
+  </div>
+  <div class="sb-nav">
+    <div class="sb-lbl">Navegação</div>
+    <div class="nav"><span class="nav-ic">🏠</span> Visão Geral</div>
+    <div class="nav on"><span class="nav-ic">🚫</span> Painel do Infrator</div>
+    <div class="nav"><span class="nav-ic">🛡️</span> Segurança</div>
+    <div class="nav"><span class="nav-ic">📊</span> Relatórios</div>
+  </div>
+  <hr class="sb-hr"/>
+  <div class="ref-btn">🔄 Atualizar Dados</div>
+  <div class="sb-foot">
+    <p><strong style="color:#8b92a5">Coletor:</strong><br><code>python run.py collect</code></p>
+    <p style="margin-top:7px"><strong style="color:#8b92a5">DB:</strong> <code>unifi_hub.db</code></p>
+    <p style="margin-top:7px;color:#4a5568">Última coleta: <span style="color:#00c278">há 12s</span></p>
+  </div>
+</aside>
+<div class="main">
+  <div class="topbar">
+    <h1>Painel do Infrator</h1>
+    <div class="badges"><span class="badge b-on">● Coletor Ativo</span><span class="badge b-warn">⚠ 2 Suspeitos</span></div>
+  </div>
+  <div class="content">
+
+    <div class="sec-h" style="margin-top:0">
+      <div><div class="sec-t">Ranking de Infratores</div><div class="sec-cap">Dispositivos que mais tentaram burlar as regras</div></div>
+      <div style="display:flex;gap:8px">
+        <select><option>30 dias</option><option>7 dias</option></select>
+        <select><option>Top 10</option><option>Top 5</option></select>
+      </div>
+    </div>
+
+    <div class="g2" style="margin-bottom:18px">
+      <div class="cc">
+        <h3>Top 10 Infratores — Bloqueios</h3>
+        <svg id="vbar" width="100%" height="230" viewBox="0 0 480 230"></svg>
+      </div>
+      <div class="cc">
+        <h3>Bloqueios por Categoria de Conteúdo</h3>
+        <svg id="pie" width="100%" height="230" viewBox="0 0 380 230"></svg>
+      </div>
+    </div>
+
+    <div class="sec-h"><div class="sec-t">Detalhes do Ranking</div></div>
+    <div class="tw" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>#</th><th>Dispositivo</th><th>MAC</th><th>Último IP</th><th>Bloqueios</th><th>Último Bloqueio</th></tr></thead>
+        <tbody id="vtb"></tbody>
+      </table>
+    </div>
+
+    <div class="sec-h"><div class="sec-t">Feed de Bloqueios Recentes</div></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Hora</th><th>Dispositivo</th><th>IP Origem</th><th>Tipo de Regra</th><th>Categoria</th><th>Destino</th></tr></thead>
+        <tbody id="ftb"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const vdata=[
+  {r:1,n:"João Pedro (iPhone)",  m:"aa:bb:cc:11:22:33",ip:"192.168.1.45",  b:312,l:"21/05 14:47",c:"#ef4444"},
+  {r:2,n:"DESKTOP-MKTG01",       m:"dd:ee:ff:44:55:66",ip:"192.168.1.112", b:198,l:"21/05 11:22",c:"#f97316"},
+  {r:3,n:"Samsung Galaxy S24",   m:"11:22:33:aa:bb:cc",ip:"192.168.1.78",  b:145,l:"20/05 22:10",c:"#eab308"},
+  {r:4,n:"NOTEBOOK-ANA",         m:"55:66:77:88:99:aa",ip:"192.168.1.91",  b:87, l:"20/05 18:33",c:"#22c55e"},
+  {r:5,n:"iPad Pro (Carlos)",    m:"bb:cc:dd:ee:ff:00",ip:"192.168.1.63",  b:72, l:"19/05 09:15",c:"#3b82f6"},
+  {r:6,n:"Xiaomi Redmi Note 12", m:"cc:dd:ee:ff:00:11",ip:"192.168.1.204", b:58, l:"18/05 20:44",c:"#8b5cf6"},
+  {r:7,n:"DESKTOP-RH01",         m:"ee:ff:00:11:22:33",ip:"192.168.1.130", b:41, l:"17/05 16:01",c:"#ec4899"},
+  {r:8,n:"iPhone (Mariana)",     m:"ff:00:11:22:33:44",ip:"192.168.1.55",  b:30, l:"16/05 10:22",c:"#14b8a6"},
+  {r:9,n:"PlayStation 5",        m:"00:11:22:33:44:55",ip:"192.168.1.220", b:22, l:"15/05 23:58",c:"#6366f1"},
+  {r:10,n:"MacBook Pro (Diego)", m:"11:33:55:77:99:bb",ip:"192.168.1.72",  b:14, l:"13/05 14:30",c:"#64748b"},
+];
+const fdata=[
+  {t:"14:47:03",n:"João Pedro (iPhone)", ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming",  dst:"youtube.com"},
+  {t:"14:46:51",n:"João Pedro (iPhone)", ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming",  dst:"youtube.com"},
+  {t:"14:45:12",n:"DESKTOP-MKTG01",      ip:"192.168.1.112", tp:"traffic", cat:"Social Media",     dst:"instagram.com"},
+  {t:"14:40:07",n:"Samsung Galaxy S24",  ip:"192.168.1.78",  tp:"traffic", cat:"Video Streaming",  dst:"tiktok.com"},
+  {t:"14:38:55",n:"NOTEBOOK-ANA",        ip:"192.168.1.91",  tp:"firewall",cat:"Firewall IP/Porta", dst:"31.13.68.1:443"},
+  {t:"14:35:20",n:"João Pedro (iPhone)", ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming",  dst:"youtube.com"},
+  {t:"14:30:44",n:"iPad Pro (Carlos)",   ip:"192.168.1.63",  tp:"traffic", cat:"Social Media",     dst:"facebook.com"},
+  {t:"14:22:11",n:"DESKTOP-MKTG01",      ip:"192.168.1.112", tp:"traffic", cat:"Adult Content",    dst:"—"},
+];
+const rk=["#dc2626","#ea580c","#eab308","#6c757d","#6c757d","#6c757d","#6c757d","#6c757d","#6c757d","#6c757d"];
+document.getElementById('vtb').innerHTML=vdata.map((d,i)=>{
+  const ini=d.n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  return`<tr><td style="font-weight:800;font-size:14px;text-align:center;color:${rk[i]}">${d.r}</td>
+  <td><div class="dc"><div class="av" style="background:${d.c}">${ini}</div><div class="dn2">${d.n}</div></div></td>
+  <td><span class="mono">${d.m}</span></td><td style="font-family:monospace;font-size:12px">${d.ip}</td>
+  <td><span class="bb">${d.b}</span></td><td style="font-size:12px;color:#6c757d">${d.l}</td></tr>`;
+}).join('');
+document.getElementById('ftb').innerHTML=fdata.map(d=>`<tr>
+  <td style="font-size:11px;color:#6c757d;font-family:monospace">${d.t}</td>
+  <td style="font-size:12px;font-weight:600">${d.n}</td>
+  <td style="font-family:monospace;font-size:12px">${d.ip}</td>
+  <td>${d.tp==='traffic'?'<span class="rt">🟠 Tráfego (App/DPI)</span>':'<span class="rf">🔵 Firewall (IP/Porta)</span>'}</td>
+  <td style="font-size:12px">${d.cat}</td>
+  <td style="font-family:monospace;font-size:11px;color:#6c757d">${d.dst}</td></tr>`).join('');
+
+// Horizontal bar chart
+(function(){
+  const el=document.getElementById('vbar');
+  const lw=128,H=230,bpad=10;
+  const vals=vdata.map(d=>d.b),mx=Math.max(...vals);
+  let h='';
+  vdata.forEach((d,i)=>{
+    const bh=16,y=bpad+i*(bh+7);
+    const bw=(480-lw-20)*(d.b/mx);
+    const nm=d.n.split(' ').slice(0,2).join(' ');
+    h+=`<text x="${lw-6}" y="${y+bh*.72}" text-anchor="end" font-size="10" fill="#374151">${nm}</text>`;
+    h+=`<rect x="${lw}" y="${y}" width="${bw}" height="${bh}" fill="${d.c}cc" rx="3"/>`;
+    h+=`<text x="${lw+bw+5}" y="${y+bh*.72}" font-size="10" font-weight="700" fill="#374151">${d.b}</text>`;
+  });
+  el.innerHTML=h;
+})();
+
+// Donut chart
+(function(){
+  const el=document.getElementById('pie');
+  const labels=['Video Streaming','Social Media','Adult Content','Firewall IP','Gaming','Outros'];
+  const vals=[45,28,10,8,5,4];
+  const colors=['#ef4444','#3b82f6','#8b5cf6','#f97316','#22c55e','#94a3b8'];
+  const total=vals.reduce((a,b)=>a+b,0);
+  const cx=110,cy=115,R=100,ri=62;
+  let ang=-Math.PI/2,h='';
+  vals.forEach((v,i)=>{
+    const sw=2*Math.PI*(v/total);
+    const x1=cx+R*Math.cos(ang),y1=cy+R*Math.sin(ang);
+    const x2=cx+R*Math.cos(ang+sw),y2=cy+R*Math.sin(ang+sw);
+    const xi1=cx+ri*Math.cos(ang),yi1=cy+ri*Math.sin(ang);
+    const xi2=cx+ri*Math.cos(ang+sw),yi2=cy+ri*Math.sin(ang+sw);
+    const big=sw>Math.PI?1:0;
+    h+=`<path d="M${xi1},${yi1} L${x1},${y1} A${R},${R} 0 ${big},1 ${x2},${y2} L${xi2},${yi2} A${ri},${ri} 0 ${big},0 ${xi1},${yi1} Z" fill="${colors[i]}"/>`;
+    ang+=sw;
+  });
+  const lx=225;
+  labels.forEach((lb,i)=>{
+    const ly=20+i*28;
+    h+=`<rect x="${lx}" y="${ly}" width="12" height="12" fill="${colors[i]}" rx="2"/>`;
+    h+=`<text x="${lx+17}" y="${ly+10}" font-size="11" fill="#374151">${lb}</text>`;
+    h+=`<text x="${lx+17}" y="${ly+22}" font-size="10" fill="#6c757d">${Math.round(vals[i]/total*100)}% · ${vals[i]*18} bloq.</text>`;
+  });
+  el.innerHTML=h;
+})();
+</script>
+</body></html>

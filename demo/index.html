@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>UniFi Intelligence Hub</title>
+<style>
+:root{
+  --bg:#f0f2f6;--card:#fff;--sidebar:#0e1117;--brand:#00c278;
+  --navy:#00527a;--red:#ef4444;--orange:#f97316;--yellow:#eab308;
+  --text:#1a1a2e;--muted:#6c757d;--border:#e0e3eb;
+  --sidebar-w:252px;
+}
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif}
+body{display:flex;height:100vh;overflow:hidden;background:var(--bg);color:var(--text)}
+
+/* ── SIDEBAR ── */
+.sb{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar);display:flex;flex-direction:column;overflow-y:auto}
+.sb-head{padding:22px 18px 14px;border-bottom:1px solid #1e2130}
+.sb-logo{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.sb-icon{width:34px;height:34px;background:var(--brand);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.sb-title{color:#fff;font-size:14px;font-weight:700}
+.sb-sub{color:#8b92a5;font-size:10px;margin-top:1px}
+.sb-nav{padding:14px 10px 6px}
+.sb-lbl{color:#4a5568;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:0 8px;margin-bottom:5px}
+.nav{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:7px;color:#9ca3af;font-size:13px;font-weight:500;cursor:pointer;transition:.15s;margin-bottom:2px;user-select:none}
+.nav:hover{background:#1e2130;color:#e5e7eb}
+.nav.on{background:#00527a22;color:var(--brand);font-weight:600}
+.nav-ic{font-size:15px;width:18px;text-align:center}
+.sb-hr{border:none;border-top:1px solid #1e2130;margin:8px 18px}
+.ref-btn{margin:6px 10px;padding:9px 12px;background:#1e2130;color:#9ca3af;border:1px solid #2a3050;border-radius:7px;font-size:12px;cursor:pointer;text-align:center}
+.ref-btn:hover{background:#2a3050;color:#fff}
+.sb-foot{padding:12px 18px 20px;margin-top:auto}
+.sb-foot p{color:#4a5568;font-size:10px;line-height:1.7}
+.sb-foot code{background:#1e2130;color:var(--brand);padding:1px 4px;border-radius:3px;font-size:10px}
+
+/* ── MAIN ── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{background:#fff;border-bottom:1px solid var(--border);padding:13px 26px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.topbar h1{font-size:18px;font-weight:700}
+.badges{display:flex;gap:8px}
+.badge{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.b-on{background:#dcfce7;color:#16a34a}
+.b-warn{background:#fee2e2;color:#dc2626}
+.content{flex:1;overflow-y:auto;padding:22px 26px}
+
+/* ── PAGES ── */
+.page{display:none}.page.on{display:block}
+
+/* ── CARDS ── */
+.card{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.card-t{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.card-v{font-size:30px;font-weight:800;line-height:1.1}
+.card-s{font-size:12px;color:var(--muted);margin-top:4px}
+.up{color:#16a34a;font-weight:600}.dn{color:#dc2626;font-weight:600}
+
+/* ── GRIDS ── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:15px}
+.g31{display:grid;grid-template-columns:3fr 1.1fr;gap:15px}
+
+/* ── WAN CARD ── */
+.wan-card{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.wan-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.wan-name{font-size:14px;font-weight:700}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.p-on{background:#dcfce7;color:#16a34a}.p-off{background:#fee2e2;color:#dc2626}
+.dot{width:7px;height:7px;border-radius:50%}
+.d-on{background:#21c55d}.d-off{background:#ef4444;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.wan-ip{font-size:12px;color:var(--muted);font-family:monospace;margin-bottom:10px}
+.wan-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.stat-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.stat-v{font-size:14px;font-weight:700}
+
+/* ── SECTION HEADER ── */
+.sec-h{display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px}
+.sec-h:first-child{margin-top:0}
+.sec-t{font-size:14px;font-weight:700}
+.sec-cap{font-size:11px;color:var(--muted)}
+select.flt{padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;cursor:pointer}
+
+/* ── TABLES ── */
+.tw{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead{background:#f8f9fb}
+th{padding:9px 13px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+td{padding:9px 13px;border-bottom:1px solid #f0f2f6}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8f9fb}
+.mono{font-family:monospace;font-size:11px;color:var(--muted);background:#f0f2f6;padding:1px 5px;border-radius:4px}
+.bb{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:700;background:#fee2e2;color:#dc2626}
+.av{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.dc{display:flex;align-items:center;gap:8px}
+.dn2{font-weight:600;font-size:13px}
+.r1{color:#dc2626;font-weight:800;font-size:15px}
+.r2{color:#ea580c;font-weight:800;font-size:15px}
+.r3{color:#eab308;font-weight:800;font-size:15px}
+.rn{color:var(--muted);font-weight:700;font-size:14px}
+
+/* ── BADGES ── */
+.sev{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700}
+.sc{background:#fee2e2;color:#dc2626}
+.sh{background:#ffedd5;color:#c2410c}
+.sm{background:#fef9c3;color:#a16207}
+.sl{background:#dbeafe;color:#1d4ed8}
+.rt{background:#fff7ed;color:#c2410c;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.rf{background:#eff6ff;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+
+/* ── ALERT ── */
+.alert{padding:11px 15px;border-radius:8px;margin-bottom:14px;display:flex;align-items:center;gap:9px;font-size:13px;font-weight:500}
+.a-danger{background:#fee2e2;color:#991b1b;border-left:4px solid #dc2626}
+.a-success{background:#dcfce7;color:#166534;border-left:4px solid #22c55e}
+
+/* ── SUSPICIOUS ── */
+.sus{background:#fff5f5;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:13px 15px;margin-bottom:10px}
+.sus-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.sus-name{font-weight:700;font-size:13px;color:#7f1d1d}
+.sus-d{font-size:12px;color:#991b1b;line-height:1.7}
+.sus-d code{background:#fee2e2;padding:1px 5px;border-radius:3px;font-size:11px}
+
+/* ── CHART CARD ── */
+.cc{background:var(--card);border-radius:11px;border:1px solid var(--border);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.cc h3{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+
+/* ── SVG CHARTS ── */
+svg text{font-family:'Segoe UI',system-ui,sans-serif}
+
+/* ── GAUGE ── */
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;padding:6px 0}
+.gauge-val{font-size:28px;font-weight:800;text-align:center;color:var(--text)}
+.gauge-lbl{font-size:11px;color:var(--muted);text-align:center;margin-top:2px}
+.uprow{display:flex;gap:20px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+.upstat{text-align:center}
+.upv{font-size:19px;font-weight:800}
+.upl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+
+/* ── DIVIDER ── */
+hr.dv{border:none;border-top:1px solid var(--border);margin:18px 0}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:.15s}
+.btn-p{background:var(--navy);color:#fff}.btn-p:hover{background:#003d5c}
+.btn-s{background:#fff;color:var(--text);border:1px solid var(--border)}.btn-s:hover{background:#f0f2f6}
+.btn-dl{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+
+/* ── REPORT PREVIEW ── */
+.rp-cover{background:var(--navy);border-radius:8px;padding:22px;text-align:center;margin-bottom:14px}
+.rp-c1{color:#fff;font-size:18px;font-weight:800}
+.rp-c2{color:#b0d4e8;font-size:12px;margin-top:3px}
+.rp-c3{color:#fff;font-size:15px;font-weight:700;margin-top:6px}
+
+/* ── FEED ── */
+.feed-row{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #f0f2f6;align-items:flex-start}
+.feed-row:last-child{border-bottom:none}
+.ft{font-size:11px;color:var(--muted);font-family:monospace;min-width:52px;padding-top:2px}
+.fb{flex:1}
+.ftitle{font-size:13px;font-weight:600}
+.fsub{font-size:11px;color:var(--muted);margin-top:1px}
+
+.divider{border:none;border-top:1px solid var(--border);margin:18px 0}
+</style>
+</head>
+<body>
+
+<!-- ══ SIDEBAR ══════════════════════════════════════════════════ -->
+<aside class="sb">
+  <div class="sb-head">
+    <div class="sb-logo">
+      <div class="sb-icon">🛡️</div>
+      <div><div class="sb-title">UniFi Intelligence Hub</div></div>
+    </div>
+    <div class="sb-sub">Monitoramento & Auditoria Avançada</div>
+  </div>
+
+  <div class="sb-nav">
+    <div class="sb-lbl">Navegação</div>
+    <div class="nav on"  id="n0" onclick="go(0)"><span class="nav-ic">🏠</span> Visão Geral</div>
+    <div class="nav"     id="n1" onclick="go(1)"><span class="nav-ic">🚫</span> Painel do Infrator</div>
+    <div class="nav"     id="n2" onclick="go(2)"><span class="nav-ic">🛡️</span> Segurança</div>
+    <div class="nav"     id="n3" onclick="go(3)"><span class="nav-ic">📊</span> Relatórios</div>
+  </div>
+
+  <hr class="sb-hr"/>
+  <div class="ref-btn" onclick="this.textContent='⏳ Atualizando...';setTimeout(()=>this.textContent='🔄 Atualizar Dados',1200)">🔄 Atualizar Dados</div>
+
+  <div class="sb-foot">
+    <p><strong style="color:#8b92a5">Coletor:</strong><br>
+    <code>python run.py collect</code></p>
+    <p style="margin-top:7px"><strong style="color:#8b92a5">DB:</strong> <code>unifi_hub.db</code></p>
+    <p style="margin-top:7px;color:#4a5568">Última coleta: <span style="color:#00c278">há 12s</span></p>
+  </div>
+</aside>
+
+<!-- ══ MAIN ══════════════════════════════════════════════════════ -->
+<div class="main">
+  <div class="topbar">
+    <h1 id="ptitle">Visão Geral da Rede</h1>
+    <div class="badges">
+      <span class="badge b-on">● Coletor Ativo</span>
+      <span class="badge b-warn">⚠ 2 Suspeitos</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+<!-- ══════════ P0: VISÃO GERAL ══════════════════════════════════ -->
+<div class="page on" id="p0">
+
+  <div class="sec-h" style="margin-top:0">
+    <div><div class="sec-t">Status dos Links WAN</div><div class="sec-cap">Dados coletados em tempo real via API</div></div>
+  </div>
+  <div class="g2" style="margin-bottom:18px">
+    <div class="wan-card">
+      <div class="wan-h">
+        <span class="wan-name">🌐 WAN 1 — Principal</span>
+        <span class="pill p-on"><span class="dot d-on"></span>Online</span>
+      </div>
+      <div class="wan-ip">187.33.214.88</div>
+      <div class="wan-stats">
+        <div><div class="stat-lbl">Latência</div><div class="stat-v" style="color:#21c55d">8 ms</div></div>
+        <div><div class="stat-lbl">Uptime</div><div class="stat-v">14d 6h</div></div>
+        <div><div class="stat-lbl">↓ / ↑</div><div class="stat-v" style="font-size:12px">4.2 GB / 890 MB</div></div>
+      </div>
+    </div>
+    <div class="wan-card">
+      <div class="wan-h">
+        <span class="wan-name">🌐 WAN 2 — Backup</span>
+        <span class="pill p-off"><span class="dot d-off"></span>Offline</span>
+      </div>
+      <div class="wan-ip">—</div>
+      <div class="wan-stats">
+        <div><div class="stat-lbl">Latência</div><div class="stat-v" style="color:#ef4444">—</div></div>
+        <div><div class="stat-lbl">Uptime</div><div class="stat-v">—</div></div>
+        <div><div class="stat-lbl">↓ / ↑</div><div class="stat-v" style="font-size:12px">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-h"><div class="sec-t">Resumo — Últimos 30 dias</div></div>
+  <div class="g4" style="margin-bottom:20px">
+    <div class="card"><div class="card-t">🚫 Bloqueios Totais</div><div class="card-v">1.847</div><div class="card-s"><span class="dn">↑ 12%</span> vs mês anterior</div></div>
+    <div class="card"><div class="card-t">👤 Infratores Únicos</div><div class="card-v">18</div><div class="card-s"><span class="dn">↑ 3</span> novos este mês</div></div>
+    <div class="card"><div class="card-t">⚠️ Ameaças IPS/IDS</div><div class="card-v">43</div><div class="card-s"><span class="up">↓ 7%</span> vs mês anterior</div></div>
+    <div class="card"><div class="card-t">🔴 Dispositivos Suspeitos</div><div class="card-v" style="color:#dc2626">2</div><div class="card-s">Burst detectado hoje</div></div>
+  </div>
+
+  <div class="g31">
+    <!-- Bar chart: bloqueios por hora -->
+    <div class="cc">
+      <h3>Bloqueios por Hora — Últimas 48h</h3>
+      <svg id="barchart" width="100%" height="170" viewBox="0 0 700 170"></svg>
+    </div>
+    <!-- Gauge: uptime -->
+    <div class="cc" style="display:flex;flex-direction:column">
+      <h3>Uptime WAN — Maio 2026</h3>
+      <div class="gauge-wrap" style="flex:1;justify-content:center">
+        <svg width="160" height="140" viewBox="0 0 160 140">
+          <!-- track -->
+          <path d="M20,120 A70,70 0 1,1 140,120" fill="none" stroke="#f0f2f6" stroke-width="18" stroke-linecap="round"/>
+          <!-- fill 99.7% -->
+          <path d="M20,120 A70,70 0 1,1 140,120" fill="none" stroke="#00c278" stroke-width="18" stroke-linecap="round"
+                stroke-dasharray="219.9 220" stroke-dashoffset="0.66"/>
+          <text x="80" y="105" text-anchor="middle" font-size="26" font-weight="800" fill="#1a1a2e">99.7%</text>
+          <text x="80" y="124" text-anchor="middle" font-size="11" fill="#6c757d">disponível</text>
+        </svg>
+      </div>
+      <div class="uprow">
+        <div class="upstat"><div class="upv">720</div><div class="upl">Amostras</div></div>
+        <div class="upstat"><div class="upv" style="color:#21c55d">718</div><div class="upl">Online</div></div>
+        <div class="upstat"><div class="upv">8 ms</div><div class="upl">Lat. média</div></div>
+      </div>
+    </div>
+  </div>
+</div><!-- /p0 -->
+
+
+<!-- ══════════ P1: PAINEL DO INFRATOR ════════════════════════════ -->
+<div class="page" id="p1">
+
+  <div class="sec-h" style="margin-top:0">
+    <div><div class="sec-t">Ranking de Infratores</div><div class="sec-cap">Dispositivos que mais tentaram burlar as regras</div></div>
+    <div style="display:flex;gap:8px">
+      <select class="flt"><option>30 dias</option><option>7 dias</option><option>14 dias</option></select>
+      <select class="flt"><option>Top 10</option><option>Top 5</option><option>Top 20</option></select>
+    </div>
+  </div>
+
+  <div class="g2" style="margin-bottom:18px">
+    <div class="cc">
+      <h3>Top 10 Infratores — Bloqueios</h3>
+      <svg id="vbar" width="100%" height="220" viewBox="0 0 480 220"></svg>
+    </div>
+    <div class="cc">
+      <h3>Bloqueios por Categoria de Conteúdo</h3>
+      <svg id="pie" width="100%" height="220" viewBox="0 0 380 220"></svg>
+    </div>
+  </div>
+
+  <div class="sec-h"><div class="sec-t">Detalhes do Ranking</div></div>
+  <div class="tw" style="margin-bottom:20px">
+    <table>
+      <thead><tr><th>#</th><th>Dispositivo</th><th>MAC</th><th>Último IP</th><th>Bloqueios</th><th>Último Bloqueio</th></tr></thead>
+      <tbody id="vtb"></tbody>
+    </table>
+  </div>
+
+  <div class="sec-h"><div class="sec-t">Feed de Bloqueios Recentes</div></div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Hora</th><th>Dispositivo</th><th>IP Origem</th><th>Tipo de Regra</th><th>Categoria</th><th>Destino</th></tr></thead>
+      <tbody id="ftb"></tbody>
+    </table>
+  </div>
+</div><!-- /p1 -->
+
+
+<!-- ══════════ P2: SEGURANÇA ════════════════════════════════════ -->
+<div class="page" id="p2">
+
+  <div class="alert a-danger">⚠️ <strong>2 dispositivos marcados como SUSPEITOS</strong> — burst de bloqueios detectado (≥ 5/min). Veja abaixo.</div>
+
+  <div class="sec-h" style="margin-top:0">
+    <div class="sec-t">Volume de Eventos de Segurança — Últimos 7 dias</div>
+    <select class="flt"><option>7 dias</option><option>1 dia</option><option>14 dias</option></select>
+  </div>
+  <div class="cc" style="margin-bottom:18px">
+    <svg id="sbar" width="100%" height="140" viewBox="0 0 700 140"></svg>
+    <div style="display:flex;gap:16px;margin-top:8px;font-size:11px">
+      <span><span style="display:inline-block;width:12px;height:12px;background:#3b82f680;border-radius:2px;margin-right:4px"></span>Bloqueios</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#ef444480;border-radius:2px;margin-right:4px"></span>Ameaças IPS</span>
+    </div>
+  </div>
+
+  <div class="g2" style="margin-bottom:18px">
+    <div class="cc">
+      <h3>Distribuição por Severidade</h3>
+      <svg id="sevbar" width="100%" height="160" viewBox="0 0 360 160"></svg>
+    </div>
+    <div class="cc">
+      <h3>Top Tipos de Ameaça</h3>
+      <svg id="threatbar" width="100%" height="160" viewBox="0 0 360 160"></svg>
+    </div>
+  </div>
+
+  <div class="sec-h"><div class="sec-t">Últimos Eventos de Ameaça</div></div>
+  <div class="tw" style="margin-bottom:20px">
+    <table>
+      <thead><tr><th>🚨</th><th>Hora</th><th>Origem</th><th>Tipo</th><th>Severidade</th><th>Descrição</th><th>Ação</th></tr></thead>
+      <tbody id="ttb"></tbody>
+    </table>
+  </div>
+
+  <div class="sec-h"><div class="sec-t">Dispositivos Suspeitos</div><div class="sec-cap">Marcados automaticamente por burst ≥ 5 bloqueios/min</div></div>
+  <div class="sus">
+    <div class="sus-h"><span class="sus-name">🔴 João Pedro (iPhone) — 192.168.1.45</span><span class="sev sc">SUSPEITO</span></div>
+    <div class="sus-d"><b>MAC:</b> <code>aa:bb:cc:11:22:33</code> &nbsp;|&nbsp; <b>Total de bloqueios:</b> 312 &nbsp;|&nbsp; <b>Motivo:</b> 8 bloqueios em menos de 1 minuto (limiar: 5)<br><b>Último visto:</b> 21/05/2026 14:47:03</div>
+  </div>
+  <div class="sus">
+    <div class="sus-h"><span class="sus-name">🔴 DESKTOP-MKTG01 — 192.168.1.112</span><span class="sev sc">SUSPEITO</span></div>
+    <div class="sus-d"><b>MAC:</b> <code>dd:ee:ff:44:55:66</code> &nbsp;|&nbsp; <b>Total de bloqueios:</b> 198 &nbsp;|&nbsp; <b>Motivo:</b> 6 bloqueios em menos de 1 minuto (limiar: 5)<br><b>Último visto:</b> 21/05/2026 11:22:41</div>
+  </div>
+</div><!-- /p2 -->
+
+
+<!-- ══════════ P3: RELATÓRIOS ════════════════════════════════════ -->
+<div class="page" id="p3">
+
+  <div class="sec-h" style="margin-top:0">
+    <div><div class="sec-t">Relatórios Gerenciais</div><div class="sec-cap">Gere relatórios PDF ou exporte dados em CSV</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px">
+      <div>
+        <div style="font-size:14px;font-weight:700;margin-bottom:3px">📄 Relatório PDF Gerencial</div>
+        <div style="font-size:12px;color:var(--muted)">Uptime WAN · Top 10 infratores · Top 10 incidentes · Resumo executivo profissional</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="flt" style="height:34px"><option>2026</option><option>2025</option></select>
+        <select class="flt" style="height:34px"><option>Maio</option><option>Abril</option><option>Março</option></select>
+        <button class="btn btn-p" onclick="showPdf()">📑 Gerar PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pdf-ok" style="display:none;margin-bottom:14px">
+    <div class="alert a-success">✅ PDF gerado com sucesso!</div>
+    <button class="btn btn-dl">📥 Baixar unifi_report_2026_05.pdf &nbsp;(284 KB)</button>
+  </div>
+
+  <!-- Prévia do relatório -->
+  <div class="card" style="margin-bottom:18px;border:2px dashed var(--border)">
+    <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px">Prévia do Relatório — Maio 2026</div>
+    <div class="rp-cover">
+      <div class="rp-c1">UniFi Intelligence Hub</div>
+      <div class="rp-c2">Relatório Gerencial de Rede</div>
+      <div class="rp-c3">Maio 2026</div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">1. Resumo Executivo</div>
+    <div class="g4" style="margin-bottom:14px">
+      <div style="background:#f0f2f6;border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800">99.7%</div><div style="font-size:9px;color:var(--muted)">Disponibilidade WAN</div></div>
+      <div style="background:#f0f2f6;border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800">1.847</div><div style="font-size:9px;color:var(--muted)">Bloqueios (30 dias)</div></div>
+      <div style="background:#f0f2f6;border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800">43</div><div style="font-size:9px;color:var(--muted)">Ameaças IPS/IDS</div></div>
+      <div style="background:#f0f2f6;border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:#dc2626">2</div><div style="font-size:9px;color:var(--muted)">Dispositivos Suspeitos</div></div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">3. Top 10 Infratores</div>
+    <div class="tw">
+      <table style="font-size:12px">
+        <thead><tr><th>Dispositivo</th><th>MAC</th><th>Último IP</th><th>Bloqueios</th></tr></thead>
+        <tbody>
+          <tr><td>João Pedro (iPhone)</td><td><span class="mono">aa:bb:cc:11:22:33</span></td><td>192.168.1.45</td><td><span class="bb">312</span></td></tr>
+          <tr><td>DESKTOP-MKTG01</td><td><span class="mono">dd:ee:ff:44:55:66</span></td><td>192.168.1.112</td><td><span class="bb">198</span></td></tr>
+          <tr><td>Samsung Galaxy S24</td><td><span class="mono">11:22:33:aa:bb:cc</span></td><td>192.168.1.78</td><td><span class="bb">145</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <hr class="divider"/>
+  <div class="sec-h"><div class="sec-t">Exportar Dados em CSV</div></div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">📋 Histórico de Bloqueios</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Todos os registros de firewall_blocks</div>
+      <button class="btn btn-s" style="width:100%;justify-content:center" onclick="alert('✅ bloqueios.csv pronto para download!')">Exportar Bloqueios (CSV)</button>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">⚠️ Eventos de Ameaça</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Todos os registros IPS/IDS</div>
+      <button class="btn btn-s" style="width:100%;justify-content:center" onclick="alert('✅ ameacas.csv pronto para download!')">Exportar Ameaças (CSV)</button>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">👤 Ranking de Infratores</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Top infratores do período</div>
+      <button class="btn btn-s" style="width:100%;justify-content:center" onclick="alert('✅ infratores.csv pronto para download!')">Exportar Infratores (CSV)</button>
+    </div>
+  </div>
+</div><!-- /p3 -->
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<script>
+// ── DATA ──────────────────────────────────────────────────────────
+const vdata=[
+  {r:1,n:"João Pedro (iPhone)",   m:"aa:bb:cc:11:22:33",ip:"192.168.1.45",  b:312,l:"21/05 14:47",c:"#ef4444"},
+  {r:2,n:"DESKTOP-MKTG01",        m:"dd:ee:ff:44:55:66",ip:"192.168.1.112", b:198,l:"21/05 11:22",c:"#f97316"},
+  {r:3,n:"Samsung Galaxy S24",    m:"11:22:33:aa:bb:cc",ip:"192.168.1.78",  b:145,l:"20/05 22:10",c:"#eab308"},
+  {r:4,n:"NOTEBOOK-ANA",          m:"55:66:77:88:99:aa",ip:"192.168.1.91",  b:87, l:"20/05 18:33",c:"#22c55e"},
+  {r:5,n:"iPad Pro (Carlos)",     m:"bb:cc:dd:ee:ff:00",ip:"192.168.1.63",  b:72, l:"19/05 09:15",c:"#3b82f6"},
+  {r:6,n:"Xiaomi Redmi Note 12",  m:"cc:dd:ee:ff:00:11",ip:"192.168.1.204", b:58, l:"18/05 20:44",c:"#8b5cf6"},
+  {r:7,n:"DESKTOP-RH01",          m:"ee:ff:00:11:22:33",ip:"192.168.1.130", b:41, l:"17/05 16:01",c:"#ec4899"},
+  {r:8,n:"iPhone (Mariana)",      m:"ff:00:11:22:33:44",ip:"192.168.1.55",  b:30, l:"16/05 10:22",c:"#14b8a6"},
+  {r:9,n:"PlayStation 5",         m:"00:11:22:33:44:55",ip:"192.168.1.220", b:22, l:"15/05 23:58",c:"#6366f1"},
+  {r:10,n:"MacBook Pro (Diego)",  m:"11:33:55:77:99:bb",ip:"192.168.1.72",  b:14, l:"13/05 14:30",c:"#64748b"},
+];
+
+const fdata=[
+  {t:"14:47:03",n:"João Pedro (iPhone)",  ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming", dst:"youtube.com"},
+  {t:"14:46:51",n:"João Pedro (iPhone)",  ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming", dst:"youtube.com"},
+  {t:"14:45:12",n:"DESKTOP-MKTG01",       ip:"192.168.1.112", tp:"traffic", cat:"Social Media",    dst:"instagram.com"},
+  {t:"14:40:07",n:"Samsung Galaxy S24",   ip:"192.168.1.78",  tp:"traffic", cat:"Video Streaming", dst:"tiktok.com"},
+  {t:"14:38:55",n:"NOTEBOOK-ANA",         ip:"192.168.1.91",  tp:"firewall",cat:"Firewall IP/Porta",dst:"31.13.68.1:443"},
+  {t:"14:35:20",n:"João Pedro (iPhone)",  ip:"192.168.1.45",  tp:"traffic", cat:"Video Streaming", dst:"youtube.com"},
+  {t:"14:30:44",n:"iPad Pro (Carlos)",    ip:"192.168.1.63",  tp:"traffic", cat:"Social Media",    dst:"facebook.com"},
+  {t:"14:22:11",n:"DESKTOP-MKTG01",       ip:"192.168.1.112", tp:"traffic", cat:"Adult Content",   dst:"—"},
+];
+
+const tdata=[
+  {e:"🔴",t:"13:22:10",s:"192.168.1.205",       tp:"ET SCAN Port Sweep",           sv:"critical",d:"Port sweep (512 portas em 2s)",     a:"drop"},
+  {e:"🟠",t:"11:45:33",s:"João Pedro (iPhone)", tp:"ET MALWARE CnC Beacon",         sv:"high",    d:"Comunicação com C2 externo suspeito",a:"alert"},
+  {e:"🟠",t:"09:12:07",s:"192.168.1.78",        tp:"ET EXPLOIT SMB Buffer Overflow", sv:"high",    d:"Exploração SMB bloqueada",           a:"drop"},
+  {e:"🟡",t:"08:55:44",s:"DESKTOP-MKTG01",      tp:"ET POLICY P2P BitTorrent",      sv:"medium",  d:"Tráfego P2P identificado",           a:"alert"},
+  {e:"🔵",t:"07:30:12",s:"192.168.1.63",        tp:"ET INFO DNS Query to TOR",       sv:"low",     d:"Consulta DNS para nó TOR",           a:"alert"},
+];
+
+// ── NAVIGATION ────────────────────────────────────────────────────
+const ptitles=["Visão Geral da Rede","Painel do Infrator","Segurança & Ameaças","Relatórios Gerenciais"];
+function go(i){
+  document.querySelectorAll('.page').forEach((p,j)=>p.classList.toggle('on',j===i));
+  document.querySelectorAll('.nav').forEach((n,j)=>n.classList.toggle('on',j===i));
+  document.getElementById('ptitle').textContent=ptitles[i];
+  document.querySelector('.content').scrollTop=0;
+}
+
+// ── TABLES ────────────────────────────────────────────────────────
+function initTables(){
+  const rankClasses=["r1","r2","r3","rn","rn","rn","rn","rn","rn","rn"];
+  const avColors=vdata.map(d=>d.c);
+  document.getElementById('vtb').innerHTML=vdata.map((d,i)=>{
+    const ini=d.n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    return`<tr>
+      <td class="${rankClasses[i]}" style="font-weight:800;font-size:14px;text-align:center">${d.r}</td>
+      <td><div class="dc"><div class="av" style="background:${d.c}">${ini}</div><div class="dn2">${d.n}</div></div></td>
+      <td><span class="mono">${d.m}</span></td>
+      <td style="font-family:monospace;font-size:12px">${d.ip}</td>
+      <td><span class="bb">${d.b}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${d.l}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('ftb').innerHTML=fdata.map(d=>{
+    const badge=d.tp==='traffic'
+      ?'<span class="rt">🟠 Tráfego (App/DPI)</span>'
+      :'<span class="rf">🔵 Firewall (IP/Porta)</span>';
+    return`<tr>
+      <td style="font-size:11px;color:var(--muted);font-family:monospace">${d.t}</td>
+      <td style="font-size:12px;font-weight:600">${d.n}</td>
+      <td style="font-family:monospace;font-size:12px">${d.ip}</td>
+      <td>${badge}</td>
+      <td style="font-size:12px">${d.cat}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted)">${d.dst}</td>
+    </tr>`;
+  }).join('');
+
+  const sevMap={critical:'sc',high:'sh',medium:'sm',low:'sl'};
+  document.getElementById('ttb').innerHTML=tdata.map(d=>`<tr>
+    <td style="font-size:16px">${d.e}</td>
+    <td style="font-family:monospace;font-size:11px;color:var(--muted)">${d.t}</td>
+    <td style="font-size:12px;font-weight:600">${d.s}</td>
+    <td style="font-size:12px">${d.tp}</td>
+    <td><span class="sev ${sevMap[d.sv]}">${d.sv.toUpperCase()}</span></td>
+    <td style="font-size:12px;color:var(--muted)">${d.d}</td>
+    <td><span class="mono">${d.a}</span></td>
+  </tr>`).join('');
+}
+
+// ── SVG CHARTS ────────────────────────────────────────────────────
+function svgBar(svgId, labels, datasets, opts={}){
+  const el=document.getElementById(svgId);
+  if(!el)return;
+  const W=parseInt(el.getAttribute('viewBox').split(' ')[2]);
+  const H=parseInt(el.getAttribute('viewBox').split(' ')[3]);
+  const pad={l:opts.pl||8,r:12,t:8,b:opts.pb||28};
+  const cw=W-pad.l-pad.r;
+  const ch=H-pad.t-pad.b;
+  const allVals=datasets.flatMap(d=>d.data);
+  const maxV=Math.max(...allVals,1);
+  const n=labels.length;
+  const grpW=cw/n;
+  const bw=(grpW*0.7)/datasets.length;
+  let html='';
+  // gridlines
+  [0,.25,.5,.75,1].forEach(f=>{
+    const y=pad.t+ch*(1-f);
+    html+=`<line x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}" stroke="#e0e3eb" stroke-width="1"/>`;
+    if(f>0)html+=`<text x="${pad.l-3}" y="${y+4}" text-anchor="end" font-size="8" fill="#9ca3af">${Math.round(f*maxV)}</text>`;
+  });
+  datasets.forEach((ds,di)=>{
+    ds.data.forEach((v,i)=>{
+      const bh=ch*(v/maxV);
+      const x=pad.l+grpW*i+(grpW*0.15)+(bw+2)*di;
+      const y=pad.t+ch-bh;
+      html+=`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${ds.color}" rx="3"/>`;
+    });
+  });
+  // x labels
+  labels.forEach((lb,i)=>{
+    if(!lb)return;
+    const x=pad.l+grpW*i+grpW/2;
+    html+=`<text x="${x}" y="${H-6}" text-anchor="middle" font-size="9" fill="#9ca3af">${lb}</text>`;
+  });
+  el.innerHTML=html;
+}
+
+function svgHBar(svgId, labels, values, colors){
+  const el=document.getElementById(svgId);
+  if(!el)return;
+  const W=parseInt(el.getAttribute('viewBox').split(' ')[2]);
+  const H=parseInt(el.getAttribute('viewBox').split(' ')[3]);
+  const maxV=Math.max(...values,1);
+  const lw=130;
+  const bpad=8;
+  const bh=Math.min(22,(H-bpad*2)/labels.length-6);
+  let html='';
+  labels.forEach((lb,i)=>{
+    const y=bpad+i*(bh+7);
+    const bw=(W-lw-16)*(values[i]/maxV);
+    const col=Array.isArray(colors)?colors[i]:colors;
+    html+=`<text x="${lw-6}" y="${y+bh*0.72}" text-anchor="end" font-size="10" fill="#374151">${lb.length>18?lb.slice(0,17)+'…':lb}</text>`;
+    html+=`<rect x="${lw}" y="${y}" width="${bw}" height="${bh}" fill="${col}" rx="3"/>`;
+    html+=`<text x="${lw+bw+5}" y="${y+bh*0.72}" font-size="10" font-weight="700" fill="#374151">${values[i]}</text>`;
+  });
+  el.innerHTML=html;
+}
+
+function svgDonut(svgId, labels, values, colors){
+  const el=document.getElementById(svgId);
+  if(!el)return;
+  const W=parseInt(el.getAttribute('viewBox').split(' ')[2]);
+  const H=parseInt(el.getAttribute('viewBox').split(' ')[3]);
+  const cx=H/2, cy=H/2, R=H/2-10, ri=R*0.55;
+  const total=values.reduce((a,b)=>a+b,0);
+  let angle=-Math.PI/2;
+  let html='';
+  values.forEach((v,i)=>{
+    const sweep=2*Math.PI*(v/total);
+    const x1=cx+R*Math.cos(angle), y1=cy+R*Math.sin(angle);
+    const x2=cx+R*Math.cos(angle+sweep), y2=cy+R*Math.sin(angle+sweep);
+    const xi1=cx+ri*Math.cos(angle), yi1=cy+ri*Math.sin(angle);
+    const xi2=cx+ri*Math.cos(angle+sweep), yi2=cy+ri*Math.sin(angle+sweep);
+    const big=sweep>Math.PI?1:0;
+    html+=`<path d="M${xi1},${yi1} L${x1},${y1} A${R},${R} 0 ${big},1 ${x2},${y2} L${xi2},${yi2} A${ri},${ri} 0 ${big},0 ${xi1},${yi1} Z" fill="${colors[i]}"/>`;
+    angle+=sweep;
+  });
+  // legend
+  const lx=H+10;
+  labels.forEach((lb,i)=>{
+    const ly=16+i*22;
+    html+=`<rect x="${lx}" y="${ly}" width="11" height="11" fill="${colors[i]}" rx="2"/>`;
+    html+=`<text x="${lx+15}" y="${ly+9}" font-size="10" fill="#374151">${lb} (${Math.round(values[i]/total*100)}%)</text>`;
+  });
+  el.innerHTML=html;
+}
+
+function buildCharts(){
+  // Timeline 48h bloqueios
+  const h48=Array.from({length:48},(_,i)=>i%8===0?`${String((new Date().getHours()-47+i+48)%24).padStart(2,'0')}:00`:'');
+  const bv=[3,1,0,2,1,0,1,0,0,2,4,8,12,9,6,4,2,1,3,5,7,11,15,18,22,19,14,10,7,4,3,2,1,4,6,9,13,17,21,16,12,8,5,3,2,1,0,2];
+  const tv=[0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,1,0,2,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0];
+  svgBar('barchart',h48,[{data:bv,color:'#3b82f680'},{data:tv,color:'#ef444490'}],{pb:22});
+
+  // Violators horizontal bar
+  svgHBar('vbar',
+    vdata.map(d=>d.n.split(' ').slice(0,2).join(' ')),
+    vdata.map(d=>d.b),
+    vdata.map(d=>d.c+'cc')
+  );
+
+  // Category donut
+  svgDonut('pie',
+    ['Video Streaming','Social Media','Adult Content','Firewall','Gaming','Outros'],
+    [45,28,10,8,5,4],
+    ['#ef4444','#3b82f6','#8b5cf6','#f97316','#22c55e','#94a3b8']
+  );
+
+  // Security 7d timeline
+  const d7=Array.from({length:56},(_,i)=>i%8===0?`${21-Math.floor(i/8)}/05`:'');
+  const sb=Array.from({length:56},()=>Math.floor(Math.random()*18+2));
+  const st=Array.from({length:56},()=>Math.random()<0.12?Math.floor(Math.random()*4):0);
+  svgBar('sbar',d7,[{data:sb,color:'#3b82f660'},{data:st,color:'#ef444490'}],{pb:22});
+
+  // Severity bar
+  svgBar('sevbar',['Critical','High','Medium','Low'],[{data:[5,12,18,8],color:'#dc2626'}],{pl:40,pb:22});
+
+  // Threat types hbar
+  svgHBar('threatbar',
+    ['ET SCAN','ET MALWARE','ET EXPLOIT','ET POLICY','ET INFO'],
+    [8,9,6,12,8],
+    '#6366f1aa'
+  );
+}
+
+function showPdf(){
+  document.getElementById('pdf-ok').style.display='block';
+  document.getElementById('pdf-ok').scrollIntoView({behavior:'smooth'});
+}
+
+// ── INIT ─────────────────────────────────────────────────────────
+initTables();
+buildCharts();
+</script>
+</body>
+</html>
