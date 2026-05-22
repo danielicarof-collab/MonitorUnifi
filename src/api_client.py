@@ -608,6 +608,110 @@ class UniFiAPIClient:
     def is_threat_event(event_key: str) -> bool:
         return any(event_key.startswith(p) for p in THREAT_EVENT_KEYS)
 
+    # ── Device Statistics (v10.3.58) ────────────────────────────────────
+
+    def get_device_statistics(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtém estatísticas detalhadas de um dispositivo UniFi.
+        Endpoint: /v1/sites/{siteId}/devices/{deviceId}/statistics/latest
+        
+        Retorna:
+          - uptimeSec, cpuUtilizationPct, memoryUtilizationPct
+          - loadAverage1Min, loadAverage5Min, loadAverage15Min
+          - txRateBps, rxRateBps
+          - interfaces (radios com frequencyGHz, txRetriesPct)
+        """
+        endpoint = f"/stat/device/{device_id}"
+        return self._request("GET", endpoint)
+
+    def get_all_devices_statistics(self) -> List[Dict[str, Any]]:
+        """
+        Obtém estatísticas para TODOS os dispositivos adotados.
+        Endpoint: /v1/sites/{siteId}/stat/device
+        """
+        endpoint = "/stat/device"
+        result = self._request("GET", endpoint)
+        return result if isinstance(result, list) else []
+
+    # ── Network Statistics (v10.3.58) ────────────────────────────────────
+
+    def get_networks(self) -> List[Dict[str, Any]]:
+        """
+        Obtém informações sobre todas as redes configuradas.
+        Endpoint: /v1/sites/{siteId}/rest/networkconf
+        
+        Retorna lista com:
+          - name, ip_subnet, num_clients, up_bytes, down_bytes
+        """
+        endpoint = "/rest/networkconf"
+        result = self._request("GET", endpoint)
+        return result if isinstance(result, list) else []
+
+    def get_network_details(self, network_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtém detalhes de uma rede específica.
+        Endpoint: /v1/sites/{siteId}/rest/networkconf/{networkId}
+        """
+        endpoint = f"/rest/networkconf/{network_id}"
+        return self._request("GET", endpoint)
+
+    # ── Device Health & Performance ────────────────────────────────────
+
+    def get_device_uptime(self, device_id: str) -> Optional[int]:
+        """
+        Retorna o uptime em segundos de um dispositivo.
+        """
+        stats = self.get_device_statistics(device_id)
+        if stats and isinstance(stats, dict):
+            return stats.get("uptimeSec")
+        return None
+
+    def get_device_load(self, device_id: str) -> Optional[Dict[str, float]]:
+        """
+        Retorna a carga média do dispositivo (1, 5, 15 min).
+        """
+        stats = self.get_device_statistics(device_id)
+        if stats and isinstance(stats, dict):
+            return {
+                "load_1min": stats.get("loadAverage1Min"),
+                "load_5min": stats.get("loadAverage5Min"),
+                "load_15min": stats.get("loadAverage15Min"),
+            }
+        return None
+
+    def get_device_resource_utilization(self, device_id: str) -> Optional[Dict[str, float]]:
+        """
+        Retorna utilização de CPU e memória do dispositivo.
+        """
+        stats = self.get_device_statistics(device_id)
+        if stats and isinstance(stats, dict):
+            return {
+                "cpu_pct": stats.get("cpuUtilizationPct"),
+                "memory_pct": stats.get("memoryUtilizationPct"),
+            }
+        return None
+
+    def get_device_radio_quality(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retorna qualidade de rádio (TX retries %) e frequências por banda.
+        """
+        stats = self.get_device_statistics(device_id)
+        if stats and isinstance(stats, dict):
+            interfaces = stats.get("interfaces", {})
+            if isinstance(interfaces, dict):
+                radios = interfaces.get("radios", [])
+                if isinstance(radios, list):
+                    return {
+                        "radios": [
+                            {
+                                "frequency_ghz": r.get("frequencyGHz"),
+                                "tx_retries_pct": r.get("txRetriesPct"),
+                            }
+                            for r in radios
+                        ]
+                    }
+        return None
+
     @staticmethod
     def infer_category_from_text(text: str) -> Optional[str]:
         lower = text.lower()

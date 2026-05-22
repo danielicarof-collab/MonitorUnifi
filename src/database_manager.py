@@ -800,3 +800,137 @@ class DatabaseManager:
                     value=str(ts_ms),
                 ))
             sess.commit()
+
+    # ------------------------------------------------------------------
+    # Device Statistics (NEW)
+    # ------------------------------------------------------------------
+
+    def insert_device_stat(self, data: Dict[str, Any]) -> bool:
+        """Insert a device statistic snapshot."""
+        from src.models import DeviceStat
+        
+        device_mac = data.get("device_mac", "").lower()
+        if not device_mac:
+            return False
+
+        try:
+            with self._session() as sess:
+                rec = DeviceStat(
+                    timestamp               = data.get("timestamp", datetime.utcnow()),
+                    device_mac              = device_mac,
+                    device_name             = data.get("device_name"),
+                    device_model            = data.get("device_model"),
+                    device_ip               = data.get("device_ip"),
+                    cpu_utilization_pct     = data.get("cpu_utilization_pct"),
+                    memory_utilization_pct  = data.get("memory_utilization_pct"),
+                    load_average_1min       = data.get("load_average_1min"),
+                    load_average_5min       = data.get("load_average_5min"),
+                    load_average_15min      = data.get("load_average_15min"),
+                    uptime_sec              = data.get("uptime_sec"),
+                    last_heartbeat_at       = data.get("last_heartbeat_at"),
+                    tx_retries_pct_24g      = data.get("tx_retries_pct_24g"),
+                    tx_retries_pct_5g       = data.get("tx_retries_pct_5g"),
+                    tx_retries_pct_6g       = data.get("tx_retries_pct_6g"),
+                    frequency_24g           = data.get("frequency_24g"),
+                    frequency_5g            = data.get("frequency_5g"),
+                    frequency_6g            = data.get("frequency_6g"),
+                    tx_rate_bps             = data.get("tx_rate_bps"),
+                    rx_rate_bps             = data.get("rx_rate_bps"),
+                )
+                sess.add(rec)
+                sess.commit()
+                return True
+        except Exception as exc:
+            logger.warning("Failed to insert device stat: {}", exc)
+            return False
+
+    def get_device_stats(self, device_mac: str, hours: int = 24) -> pd.DataFrame:
+        """Get historical device statistics."""
+        from src.models import DeviceStat
+        
+        since = datetime.utcnow() - timedelta(hours=hours)
+        with self._session() as sess:
+            rows = (
+                sess.query(DeviceStat)
+                .filter(
+                    DeviceStat.device_mac == device_mac.lower(),
+                    DeviceStat.timestamp >= since
+                )
+                .order_by(DeviceStat.timestamp.asc())
+                .all()
+            )
+        
+        if not rows:
+            return pd.DataFrame()
+        
+        return pd.DataFrame([{
+            "timestamp": r.timestamp,
+            "cpu_pct": r.cpu_utilization_pct,
+            "memory_pct": r.memory_utilization_pct,
+            "load_1min": r.load_average_1min,
+            "load_5min": r.load_average_5min,
+            "load_15min": r.load_average_15min,
+            "tx_retries_24g": r.tx_retries_pct_24g,
+            "tx_retries_5g": r.tx_retries_pct_5g,
+            "tx_retries_6g": r.tx_retries_pct_6g,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # Network Statistics (NEW)
+    # ------------------------------------------------------------------
+
+    def insert_network_stat(self, data: Dict[str, Any]) -> bool:
+        """Insert a network statistic snapshot."""
+        from src.models import NetworkStat
+        
+        network_name = data.get("network_name")
+        if not network_name:
+            return False
+
+        try:
+            with self._session() as sess:
+                rec = NetworkStat(
+                    timestamp       = data.get("timestamp", datetime.utcnow()),
+                    network_name    = network_name,
+                    network_id      = data.get("network_id"),
+                    ip_subnet       = data.get("ip_subnet"),
+                    num_clients     = data.get("num_clients", 0),
+                    up_bytes        = data.get("up_bytes", 0),
+                    down_bytes      = data.get("down_bytes", 0),
+                    up_bytes_rate   = data.get("up_bytes_rate"),
+                    down_bytes_rate = data.get("down_bytes_rate"),
+                )
+                sess.add(rec)
+                sess.commit()
+                return True
+        except Exception as exc:
+            logger.warning("Failed to insert network stat: {}", exc)
+            return False
+
+    def get_network_stats(self, network_name: str, hours: int = 24) -> pd.DataFrame:
+        """Get historical network statistics."""
+        from src.models import NetworkStat
+        
+        since = datetime.utcnow() - timedelta(hours=hours)
+        with self._session() as sess:
+            rows = (
+                sess.query(NetworkStat)
+                .filter(
+                    NetworkStat.network_name == network_name,
+                    NetworkStat.timestamp >= since
+                )
+                .order_by(NetworkStat.timestamp.asc())
+                .all()
+            )
+        
+        if not rows:
+            return pd.DataFrame()
+        
+        return pd.DataFrame([{
+            "timestamp": r.timestamp,
+            "num_clients": r.num_clients,
+            "up_bytes": r.up_bytes,
+            "down_bytes": r.down_bytes,
+            "up_rate_bps": r.up_bytes_rate,
+            "down_rate_bps": r.down_bytes_rate,
+        } for r in rows])

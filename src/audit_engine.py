@@ -37,6 +37,8 @@ class AuditEngine:
     def run(self) -> None:
         """Execute all audit checks.  Called after each collection cycle."""
         self._detect_suspicious_bursts()
+        self._detect_hardware_anomalies()  # NOVO: Detecção de anomalias de hardware
+        self._detect_rf_interference()     # NOVO: Detecção de interferência de RF
 
     # ------------------------------------------------------------------
     # Suspicious-burst detection
@@ -310,3 +312,69 @@ class AuditEngine:
             return UniFiAPIClient.infer_category_from_text(message)
 
         return None
+
+    # ------------------------------------------------------------------
+    # Hardware Anomaly Detection (NEW)
+    # ------------------------------------------------------------------
+
+    def _detect_hardware_anomalies(self) -> None:
+        """
+        Detecta anomalias de hardware em dispositivos UniFi.
+        Verifica CPU, memória e carga média para identificar dispositivos sobrecarregados.
+        """
+        from src.models import DeviceStat
+        
+        # Obtém as estatísticas mais recentes de cada dispositivo
+        with self._db._engine.connect() as conn:
+            from sqlalchemy import text
+            query = text("""
+                SELECT device_mac, device_name, cpu_utilization_pct, memory_utilization_pct, load_average_15min
+                FROM device_stats
+                WHERE timestamp = (SELECT MAX(timestamp) FROM device_stats ds2 WHERE ds2.device_mac = device_stats.device_mac)
+                AND (cpu_utilization_pct > 80 OR memory_utilization_pct > 80 OR load_average_15min > 2.0)
+            """)
+            try:
+                rows = conn.execute(query).fetchall()
+                for row in rows:
+                    device_mac, device_name, cpu, mem, load = row
+                    reason = f"Hardware overload: CPU={cpu}%, Mem={mem}%, Load15m={load}"
+                    logger.warning("Device {} ({}) — {}", device_name or device_mac, device_mac, reason)
+            except Exception as e:
+                logger.debug("Hardware anomaly detection error: {}", e)
+
+    # ------------------------------------------------------------------
+    # RF Interference Detection (NEW)
+    # ------------------------------------------------------------------
+
+    def _detect_rf_interference(self) -> None:
+        """
+        Detecta possível interferência de RF baseado em TX retries altos.
+        TX retries > 15% indicam problemas de sinal ou interferência.
+        """
+        from src.models import DeviceStat
+        
+        with self._db._engine.connect() as conn:
+            from sqlalchemy import text
+            query = text("""
+                SELECT device_mac, device_name, tx_retries_pct_24g, tx_retries_pct_5g, tx_retries_pct_6g
+                FROM device_stats
+                WHERE timestamp = (SELECT MAX(timestamp) FROM device_stats ds2 WHERE ds2.device_mac = device_stats.device_mac)
+                AND (tx_retries_pct_24g > 15 OR tx_retries_pct_5g > 15 OR tx_retries_pct_6g > 15)
+            """)
+            try:
+                rows = conn.execute(query).fetchall()
+                for row in rows:
+                    device_mac, device_name, retries_24g, retries_5g, retries_6g = row
+                    bands = []
+                    if retries_24g and retries_24g > 15:
+                        bands.append(f"2.4GHz ({retries_24g}%)")
+                    if retries_5g and retries_5g > 15:
+                        bands.append(f"5GHz ({retries_5g}%)")
+                    if retries_6g and retries_6g > 15:
+                        bands.append(f"6GHz ({retries_6g}%)")
+                    
+                    if bands:
+                        reason = f"High TX retries on {', '.join(bands)} — possible RF interference or poor signal"
+                        logger.warning("Device {} ({}) — {}", device_name or device_mac, device_mac, reason)
+            except Exception as e:
+                logger.debug("RF interference detection error: {}", e)

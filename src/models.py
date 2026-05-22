@@ -196,6 +196,59 @@ class APStat(Base):
     )
 
 
+class DeviceStat(Base):
+    """Detailed hardware and radio statistics for UniFi devices (APs, Switches, Gateways)."""
+    __tablename__ = "device_stats"
+
+    id                      = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp               = Column(DateTime, default=datetime.utcnow, index=True)
+    device_mac              = Column(String(17), index=True)  # MAC do dispositivo
+    device_name             = Column(String(255))             # Nome do dispositivo
+    device_model            = Column(String(100))             # Modelo (ex: UAP-AC-Pro)
+    device_ip               = Column(String(45))              # IP do dispositivo
+    cpu_utilization_pct     = Column(Float)                   # CPU em %
+    memory_utilization_pct  = Column(Float)                   # Memória em %
+    load_average_1min       = Column(Float)                   # Carga média 1 min
+    load_average_5min       = Column(Float)                   # Carga média 5 min
+    load_average_15min      = Column(Float)                   # Carga média 15 min
+    uptime_sec              = Column(BigInteger)              # Uptime em segundos
+    last_heartbeat_at       = Column(DateTime)                # Último heartbeat
+    # Métricas por rádio (2.4GHz, 5GHz, 6GHz)
+    tx_retries_pct_24g      = Column(Float)                   # TX retries % em 2.4GHz
+    tx_retries_pct_5g       = Column(Float)                   # TX retries % em 5GHz
+    tx_retries_pct_6g       = Column(Float)                   # TX retries % em 6GHz
+    frequency_24g           = Column(Float)                   # Frequência 2.4GHz
+    frequency_5g            = Column(Float)                   # Frequência 5GHz
+    frequency_6g            = Column(Float)                   # Frequência 6GHz
+    # Tráfego
+    tx_rate_bps             = Column(BigInteger)              # TX rate em bps
+    rx_rate_bps             = Column(BigInteger)              # RX rate em bps
+
+    __table_args__ = (
+        Index("ix_device_mac_ts", "device_mac", "timestamp"),
+    )
+
+
+class NetworkStat(Base):
+    """Per-network traffic and client statistics."""
+    __tablename__ = "network_stats"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    network_name    = Column(String(255), index=True)         # Nome da rede
+    network_id      = Column(String(128))                     # ID da rede no UniFi
+    ip_subnet       = Column(String(45))                      # Sub-rede IP
+    num_clients     = Column(Integer, default=0)              # Número de clientes
+    up_bytes        = Column(BigInteger, default=0)           # Upload total
+    down_bytes      = Column(BigInteger, default=0)           # Download total
+    up_bytes_rate   = Column(BigInteger)                      # Upload rate (bytes/s)
+    down_bytes_rate = Column(BigInteger)                      # Download rate (bytes/s)
+
+    __table_args__ = (
+        Index("ix_network_name_ts", "network_name", "timestamp"),
+    )
+
+
 class RogueAP(Base):
     """Neighbouring / rogue access points detected by managed APs."""
     __tablename__ = "rogue_aps"

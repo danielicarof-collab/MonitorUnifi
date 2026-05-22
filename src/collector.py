@@ -79,6 +79,8 @@ class DataCollector:
             self._sync_clients()
             self._collect_client_snapshots()
             self._collect_wan_status()
+            self._collect_device_statistics()  # NOVO: Estatísticas detalhadas de dispositivos
+            self._collect_network_statistics()  # NOVO: Estatísticas de redes
             self._process_events()
             self._collect_dpi()
             self._collect_ap_stats()
@@ -761,3 +763,109 @@ class DataCollector:
         if proto is None:
             return None
         return mapping.get(str(proto), str(proto))
+
+    # ------------------------------------------------------------------
+    # Step X: Device Statistics Collection (NEW)
+    # ------------------------------------------------------------------
+
+    def _collect_device_statistics(self) -> None:
+        """
+        Coleta estatísticas detalhadas de hardware e rádio para todos os dispositivos UniFi.
+        Inclui CPU, memória, carga, TX retries e frequências de operação.
+        """
+        devices_stats = self._api.get_all_devices_statistics()
+        if not devices_stats:
+            logger.debug("Nenhuma estatística de dispositivo disponível")
+            return
+
+        ts = datetime.utcnow()
+        for device_stat in devices_stats:
+            device_mac = device_stat.get("mac", "").lower()
+            if not device_mac:
+                continue
+
+            # Extrai métricas de rádio (2.4GHz, 5GHz, 6GHz)
+            tx_retries_24g = None
+            tx_retries_5g = None
+            tx_retries_6g = None
+            freq_24g = None
+            freq_5g = None
+            freq_6g = None
+
+            interfaces = device_stat.get("interfaces", {})
+            if isinstance(interfaces, dict):
+                radios = interfaces.get("radios", [])
+                if isinstance(radios, list):
+                    for radio in radios:
+                        freq = radio.get("frequencyGHz")
+                        tx_retries = radio.get("txRetriesPct")
+                        
+                        if freq and tx_retries is not None:
+                            if freq < 3:  # 2.4GHz
+                                freq_24g = freq
+                                tx_retries_24g = tx_retries
+                            elif freq < 6:  # 5GHz
+                                freq_5g = freq
+                                tx_retries_5g = tx_retries
+                            else:  # 6GHz
+                                freq_6g = freq
+                                tx_retries_6g = tx_retries
+
+            # Insere o registro de estatísticas do dispositivo
+            self._db.insert_device_stat({
+                "device_mac": device_mac,
+                "device_name": device_stat.get("name"),
+                "device_model": device_stat.get("model"),
+                "device_ip": device_stat.get("ip"),
+                "cpu_utilization_pct": device_stat.get("cpuUtilizationPct"),
+                "memory_utilization_pct": device_stat.get("memoryUtilizationPct"),
+                "load_average_1min": device_stat.get("loadAverage1Min"),
+                "load_average_5min": device_stat.get("loadAverage5Min"),
+                "load_average_15min": device_stat.get("loadAverage15Min"),
+                "uptime_sec": device_stat.get("uptimeSec"),
+                "last_heartbeat_at": device_stat.get("lastHeartbeatAt"),
+                "tx_retries_pct_24g": tx_retries_24g,
+                "tx_retries_pct_5g": tx_retries_5g,
+                "tx_retries_pct_6g": tx_retries_6g,
+                "frequency_24g": freq_24g,
+                "frequency_5g": freq_5g,
+                "frequency_6g": freq_6g,
+                "tx_rate_bps": device_stat.get("uplink", {}).get("txRateBps"),
+                "rx_rate_bps": device_stat.get("uplink", {}).get("rxRateBps"),
+                "timestamp": ts,
+            })
+
+        logger.debug("Device statistics snapshot saved for {} devices", len(devices_stats))
+
+    # ------------------------------------------------------------------
+    # Step Y: Network Statistics Collection (NEW)
+    # ------------------------------------------------------------------
+
+    def _collect_network_statistics(self) -> None:
+        """
+        Coleta estatísticas de tráfego e clientes para todas as redes configuradas.
+        """
+        networks = self._api.get_networks()
+        if not networks:
+            logger.debug("Nenhuma rede disponível")
+            return
+
+        ts = datetime.utcnow()
+        for network in networks:
+            network_name = network.get("name")
+            if not network_name:
+                continue
+
+            self._db.insert_network_stat({
+                "network_name": network_name,
+                "network_id": network.get("_id") or network.get("id"),
+                "ip_subnet": network.get("ip_subnet") or network.get("networkconf"),
+                "num_clients": network.get("num_clients", 0),
+                "up_bytes": network.get("up_bytes", 0),
+                "down_bytes": network.get("down_bytes", 0),
+                "up_bytes_rate": network.get("up_bytes_rate"),
+                "down_bytes_rate": network.get("down_bytes_rate"),
+                "timestamp": ts,
+            })
+
+        logger.debug("Network statistics snapshot saved for {} networks", len(networks))
