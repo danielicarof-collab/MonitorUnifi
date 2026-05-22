@@ -1,7 +1,8 @@
 """
 SQLAlchemy ORM models — the authoritative schema for the database.
 
-Versão 2 — suporta system-log do UniFi OS 3.x+ (firmware 8.x/9.x/10.x).
+Versão 3 — suporta system-log do UniFi OS 3.x+ (firmware 8.x/9.x/10.x)
+           + device fingerprint, client snapshots, AP stats e rogue APs.
 """
 from datetime import datetime
 from sqlalchemy import (
@@ -28,6 +29,10 @@ class Client(Base):
     is_suspicious     = Column(Boolean, default=False)
     suspicious_reason = Column(Text)
     total_blocks      = Column(Integer, default=0)   # running total
+    # v3 — device fingerprint
+    device_type       = Column(String(50))           # phone, computer, tablet, iot, gaming, tv, printer, camera, unknown
+    os_name           = Column(String(100))          # iOS 17, Windows 11, Android 14
+    dev_family        = Column(String(100))          # Apple iOS, Samsung Android
 
     def display_name(self) -> str:
         return self.name or self.hostname or self.mac
@@ -137,3 +142,71 @@ class CollectionState(Base):
     key        = Column(String(64), primary_key=True)
     value      = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ClientSnapshot(Base):
+    """Point-in-time snapshot of each active client's radio/wired statistics."""
+    __tablename__ = "client_snapshots"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp     = Column(DateTime, default=datetime.utcnow, index=True)
+    client_mac    = Column(String(17), index=True)
+    signal        = Column(Integer)        # RSSI dBm (negativo, ex: -65)
+    noise         = Column(Integer)        # noise floor dBm
+    tx_rate       = Column(Float)          # Mbps negociados tx
+    rx_rate       = Column(Float)          # Mbps negociados rx
+    satisfaction  = Column(Integer)        # 0-100 score UniFi
+    tx_bytes_rate = Column(BigInteger)     # bytes/s agora
+    rx_bytes_rate = Column(BigInteger)     # bytes/s agora
+    ap_mac        = Column(String(17))
+    radio_band    = Column(String(10))     # "2.4GHz", "5GHz", "6GHz", "Wired"
+    channel       = Column(Integer)
+    essid         = Column(String(255))
+    is_wired      = Column(Boolean, default=False)
+    uptime_sec    = Column(BigInteger)
+
+    __table_args__ = (
+        Index("ix_cs_mac_ts", "client_mac", "timestamp"),
+    )
+
+
+class APStat(Base):
+    """Point-in-time statistics for each Access Point / network device."""
+    __tablename__ = "ap_stats"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    mac             = Column(String(17), index=True)
+    name            = Column(String(255))
+    model           = Column(String(100))
+    ip              = Column(String(45))
+    num_clients     = Column(Integer, default=0)
+    num_clients_24g = Column(Integer, default=0)
+    num_clients_5g  = Column(Integer, default=0)
+    num_clients_6g  = Column(Integer, default=0)
+    tx_bytes_rate   = Column(BigInteger)
+    rx_bytes_rate   = Column(BigInteger)
+    satisfaction    = Column(Integer)
+    uptime_sec      = Column(BigInteger)
+    channel_24g     = Column(Integer)
+    channel_5g      = Column(Integer)
+
+    __table_args__ = (
+        Index("ix_ap_mac_ts", "mac", "timestamp"),
+    )
+
+
+class RogueAP(Base):
+    """Neighbouring / rogue access points detected by managed APs."""
+    __tablename__ = "rogue_aps"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen  = Column(DateTime, default=datetime.utcnow)
+    bssid      = Column(String(17), unique=True, index=True)
+    ssid       = Column(String(255))
+    channel    = Column(Integer)
+    signal     = Column(Integer)
+    security   = Column(String(100))
+    is_rogue   = Column(Boolean, default=True)
+    ap_mac     = Column(String(17))   # MAC do AP que detectou

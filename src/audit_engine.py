@@ -6,6 +6,7 @@ Responsibilities:
   2. Enrich firewall-block and threat records with client display names.
   3. Classify events into rule_type (traffic_rule vs firewall_rule).
   4. Infer content category from rule name / event message when not explicit.
+  5. Infer device type from UniFi fingerprint, hostname patterns and OUI vendor.
 """
 from __future__ import annotations
 
@@ -64,6 +65,99 @@ class AuditEngine:
                     f"(threshold: {self._threshold})"
                 )
                 self._db.mark_suspicious(mac, reason)
+
+    # ------------------------------------------------------------------
+    # Device type inference
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def infer_device_type(
+        dev_cat: str = "",
+        vendor: str = "",
+        hostname: str = "",
+        os_name: str = "",
+    ) -> str:
+        """
+        Classifies a device into one of the standard device type categories
+        using a priority chain: UniFi fingerprint → hostname patterns → OUI vendor.
+
+        Returns one of: phone, computer, tablet, gaming, tv, iot,
+                        printer, camera, unknown
+        """
+        # 1. UniFi fingerprint (dev_cat) — most authoritative when present
+        cat = (dev_cat or "").lower()
+        cat_map = {
+            "mobile":         "phone",
+            "phone":          "phone",
+            "smartphone":     "phone",
+            "laptop":         "computer",
+            "desktop":        "computer",
+            "pc":             "computer",
+            "tablet":         "tablet",
+            "gaming":         "gaming",
+            "game console":   "gaming",
+            "tv":             "tv",
+            "smart tv":       "tv",
+            "streaming":      "tv",
+            "iot":            "iot",
+            "home automation": "iot",
+            "smart home":     "iot",
+            "printer":        "printer",
+            "ip camera":      "camera",
+            "camera":         "camera",
+        }
+        for k, v in cat_map.items():
+            if k in cat:
+                return v
+
+        # 2. Hostname patterns — more reliable than vendor for Apple
+        hn = (hostname or "").lower()
+        hostname_rules = [
+            ("phone",    ["iphone", "android", "pixel", "galaxy", "huawei-", "xiaomi",
+                          "mi-", "oneplus", "oppo", "vivo", "redmi"]),
+            ("tablet",   ["ipad", "tablet", "kindle"]),
+            ("computer", ["macbook", "imac", "mac-", "laptop", "thinkpad", "precision",
+                          "latitude", "pavilion", "inspiron", "elitebook", "matebook",
+                          "zenbook", "desktop", "pc-"]),
+            ("gaming",   ["playstation", "ps4", "ps5", "xbox", "nintendo", "switch",
+                          "steamdeck"]),
+            ("tv",       ["appletv", "apple-tv", "firetv", "fire-tv", "chromecast",
+                          "roku", "shield", "androidtv", "smart-tv", "bravia"]),
+            ("iot",      ["esp32", "esp8266", "arduino", "raspberry", "homeassist",
+                          "sonoff", "tasmota", "shelly", "ring-", "nest-", "echo-",
+                          "alexa", "wemo"]),
+            ("printer",  ["printer", "print-", "hp-laser", "canon-", "epson-",
+                          "brother-"]),
+            ("camera",   ["ipcam", "hikvision", "dahua", "reolink", "eufy-cam",
+                          "arlo-"]),
+        ]
+        for dtype, patterns in hostname_rules:
+            if any(p in hn for p in patterns):
+                return dtype
+
+        # 3. Vendor / OUI
+        v = (vendor or "").lower()
+        if "apple" in v:
+            # Apple makes iPhones, iPads AND Macs — use hostname to distinguish
+            if any(p in hn for p in ["iphone", "ipad", "ipod"]):
+                return "phone"
+            return "computer"
+        if any(x in v for x in ["samsung", "huawei", "xiaomi", "motorola",
+                                  "oneplus", "oppo", "vivo", "realme"]):
+            return "phone"
+        if any(x in v for x in ["dell", "hewlett", "hp inc", "lenovo", "acer",
+                                  "asus tek"]):
+            return "computer"
+        if any(x in v for x in ["roku", "lg electron"]):
+            return "tv"
+        if any(x in v for x in ["amazon", "espressif", "raspberry pi"]):
+            return "iot"
+        if any(x in v for x in ["nintendo", "sony interac"]):
+            return "gaming"
+        if any(x in v for x in ["canon", "epson", "brother", "xerox", "ricoh"]):
+            return "printer"
+
+        return "unknown"
 
     # ------------------------------------------------------------------
     # Event classification helpers (used by collector)

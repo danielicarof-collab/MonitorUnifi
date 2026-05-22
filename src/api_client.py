@@ -413,6 +413,11 @@ class UniFiAPIClient:
         result = self._request("GET", "/stat/device")
         return result if isinstance(result, list) else []
 
+    def get_rogue_aps(self) -> List[Dict]:
+        """Fetch neighbouring / rogue APs detected by managed access points."""
+        result = self._request("GET", "/stat/rogueap")
+        return result if isinstance(result, list) else []
+
     def get_vpn_clients(self) -> List[Dict]:
         result = self._request("GET", "/stat/remoteuservpn")
         return result if isinstance(result, list) else []
