@@ -41,7 +41,7 @@ st.set_page_config(
 # ------------------------------------------------------------------
 @st.cache_resource
 def _get_db() -> DatabaseManager:
-    db_url = os.getenv("DB_URL", "sqlite:///./data/unifi_hub.db")
+    db_url = os.getenv("DB_URL", f"sqlite:///{ROOT}/data/unifi_hub.db")
     db = DatabaseManager(db_url)
     db.initialize_schema()
     return db

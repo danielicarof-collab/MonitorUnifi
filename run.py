@@ -43,7 +43,7 @@ logger.add(LOG_FILE, level=LOG_LEVEL, rotation="10 MB", retention="30 days",
 
 def _build_db():
     from src.database_manager import DatabaseManager
-    db_url = os.getenv("DB_URL", "sqlite:///./data/unifi_hub.db")
+    db_url = os.getenv("DB_URL", f"sqlite:///{ROOT}/data/unifi_hub.db")
     db = DatabaseManager(db_url)
     db.initialize_schema()
     return db
@@ -170,7 +170,12 @@ def cmd_ui() -> None:
     app_path = str(ROOT / "ui" / "app.py")
     subprocess.run(
         [sys.executable, "-m", "streamlit", "run", app_path,
-         "--server.headless", "true"],
+         "--server.headless", "true",
+         "--theme.base", "light",
+         "--theme.backgroundColor", "#ffffff",
+         "--theme.secondaryBackgroundColor", "#f5f7fa",
+         "--theme.textColor", "#1a1a2e",
+         "--theme.primaryColor", "#1976d2"],
         check=False,
     )
 

@@ -14,13 +14,47 @@ import streamlit as st
 
 _CSS = """
 <style>
-/* Subtle improvements only — no background override */
+/* ── Force light theme regardless of browser/OS dark-mode preference ── */
+html, body { background-color: #ffffff !important; color: #1a1a2e !important; }
+.stApp                             { background-color: #ffffff !important; }
+[data-testid="stAppViewContainer"] { background-color: #ffffff !important; }
+[data-testid="stMainBlockContainer"]{ background-color: #ffffff !important; }
+[data-testid="stHeader"]           { background-color: #f5f7fa !important;
+                                     border-bottom: 1px solid #e0e0e0 !important; }
+section[data-testid="stSidebar"]   { background-color: #f0f2f6 !important; }
+section[data-testid="stSidebar"] > div { background-color: #f0f2f6 !important; }
+[data-testid="stSidebarContent"]   { background-color: #f0f2f6 !important; }
+
+/* Keep text readable on white */
+.stApp p, .stApp span, .stApp div:not([class*="plotly"]),
+.stApp label, .stApp li, .stApp td, .stApp th {
+    color: #1a1a2e !important;
+}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 { color: #0d1117 !important; }
+.stCaption, [data-testid="stCaptionContainer"] { color: #555 !important; }
+
+/* Metric cards */
 [data-testid="stMetric"] {
     border-left: 3px solid #1976d2;
     border-radius: 8px;
     padding: 8px 12px !important;
+    background-color: #f8f9fa !important;
 }
+[data-testid="stMetricValue"]  { color: #1976d2 !important; }
+[data-testid="stMetricLabel"]  { color: #555 !important; }
+
 .stAlert { border-radius: 8px; }
+
+/* Dividers and inputs */
+hr { border-color: #e0e0e0 !important; }
+[data-testid="stTextInput"] input,
+[data-testid="stSelectbox"] select {
+    background-color: #ffffff !important;
+    color: #1a1a2e !important;
+}
+
+/* Radio buttons in sidebar */
+.stRadio label { color: #1a1a2e !important; }
 </style>
 """
 
