@@ -14,7 +14,7 @@ from src.database_manager import DatabaseManager
 from ui.components.theme import (
     DEVICE_COLORS, DEVICE_ICONS,
     fmt_bytes, fmt_bytes_rate, fmt_uptime,
-    metric_card, plotly_dark_layout, status_badge,
+    plotly_dark_layout,
 )
 
 
@@ -64,23 +64,19 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
     cols = st.columns(len(wan_df))
     for col, (_, row) in zip(cols, wan_df.iterrows()):
         is_ok = row.get("status") == "ok"
-        color = "#3fb950" if is_ok else "#ff7b72"
-        badge_html = status_badge(is_ok)
-        card_html = metric_card(
-            title    = f"{row['interface']} — Link",
-            value    = row.get("wan_ip") or "—",
-            subtitle = (
-                f"Latência: {row.get('latency_ms') or '—'} ms  |  "
-                f"Uptime: {fmt_uptime(row.get('uptime'))}<br>"
+        badge = "🟢 Online" if is_ok else "🔴 Offline"
+        with col:
+            st.metric(
+                label=f"**{row['interface']}** — {badge}",
+                value=row.get("wan_ip") or "—",
+                help="IP público atual",
+            )
+            st.caption(f"Latência: **{row.get('latency_ms') or '—'} ms**")
+            st.caption(f"Uptime: **{fmt_uptime(row.get('uptime'))}**")
+            st.caption(
                 f"↓ {fmt_bytes(row.get('rx_bytes'))}  "
                 f"↑ {fmt_bytes(row.get('tx_bytes'))}"
-            ),
-            icon  = "🌐",
-            color = color,
-        )
-        with col:
-            st.markdown(badge_html, unsafe_allow_html=True)
-            st.markdown(card_html, unsafe_allow_html=True)
+            )
 
 
 # ------------------------------------------------------------------
@@ -91,18 +87,11 @@ def _render_kpis(stats: dict) -> None:
     st.subheader("Resumo — Últimos 30 dias")
 
     c1, c2, c3, c4, c5 = st.columns(5)
-
-    kpi_defs = [
-        (c1, "Bloqueios Totais",      str(stats.get("total_blocks", 0)),       "Firewall + Traffic Rules",  "🚫", "#ff7b72"),
-        (c2, "Infratores Únicos",     str(stats.get("unique_violators", 0)),   "Dispositivos distintos",    "👤", "#ffa657"),
-        (c3, "Ameaças IPS/IDS",       str(stats.get("total_threats", 0)),      "Eventos detectados",        "⚠️", "#d2a8ff"),
-        (c4, "Dispositivos Suspeitos",str(stats.get("suspicious_devices", 0)),"Motor de auditoria",        "🔴", "#f0883e"),
-        (c5, "Online Agora",          str(stats.get("online_devices", 0)),     "Últimos 5 minutos",         "📡", "#3fb950"),
-    ]
-
-    for col, title, value, subtitle, icon, color in kpi_defs:
-        with col:
-            st.markdown(metric_card(title, value, subtitle, icon, color), unsafe_allow_html=True)
+    c1.metric("🚫 Bloqueios Totais",      stats.get("total_blocks", 0),       help="Firewall + Traffic Rules")
+    c2.metric("👤 Infratores Únicos",     stats.get("unique_violators", 0),   help="Dispositivos distintos bloqueados")
+    c3.metric("⚠️ Ameaças IPS/IDS",     stats.get("total_threats", 0),       help="Eventos IPS/IDS detectados")
+    c4.metric("🔴 Suspeitos",            stats.get("suspicious_devices", 0),  help="Marcados pelo motor de auditoria")
+    c5.metric("📡 Online Agora",          stats.get("online_devices", 0),      help="Dispositivos com snapshot nos últimos 5 min")
 
 
 # ------------------------------------------------------------------
@@ -219,39 +208,31 @@ def _render_uptime_gauge(db: DatabaseManager) -> None:
         fig = go.Figure(go.Indicator(
             mode   = "gauge+number",
             value  = pct,
-            number = {"suffix": "%", "font": {"size": 40, "color": "#e2e8f0"}},
+            number = {"suffix": "%", "font": {"size": 40}},
             gauge  = {
-                "axis":      {"range": [0, 100], "tickcolor": "#94a3b8"},
-                "bar":       {"color": bar_color},
-                "bgcolor":   "rgba(13,17,23,1)",
-                "bordercolor": "#1e3a5f",
+                "axis": {"range": [0, 100]},
+                "bar":  {"color": bar_color},
                 "steps": [
-                    {"range": [0,   95],  "color": "rgba(255,123,114,0.15)"},
-                    {"range": [95,  99],  "color": "rgba(255,166,87,0.15)"},
-                    {"range": [99, 100],  "color": "rgba(63,185,80,0.15)"},
+                    {"range": [0,  95],  "color": "#ffe0e0"},
+                    {"range": [95, 99],  "color": "#fff3cd"},
+                    {"range": [99, 100], "color": "#e0ffe8"},
                 ],
                 "threshold": {
-                    "line":      {"color": "#58a6ff", "width": 3},
+                    "line": {"color": "black", "width": 4},
                     "thickness": 0.75,
-                    "value":     99.9,
+                    "value": 99.9,
                 },
             },
-            title  = {"text": "Disponibilidade", "font": {"color": "#94a3b8"}},
+            title = {"text": "Disponibilidade"},
         ))
-        layout = plotly_dark_layout()
-        layout.update({"height": 260, "margin": {"t": 40, "b": 0, "l": 20, "r": 20}})
-        fig.update_layout(**layout)
+        fig.update_layout(height=260, margin=dict(t=40, b=0, l=20, r=20))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_detail:
-        st.markdown(metric_card("Amostras Coletadas", str(uptime_data["total_samples"]),
-                                "", "🔢", "#58a6ff"), unsafe_allow_html=True)
-        st.markdown(metric_card("Amostras Online", str(uptime_data["up_samples"]),
-                                "", "✅", "#3fb950"), unsafe_allow_html=True)
+        st.metric("Amostras Coletadas", uptime_data["total_samples"])
+        st.metric("Amostras Online",    uptime_data["up_samples"])
         avg_lat = uptime_data.get("avg_latency_ms")
-        lat_str = f"{avg_lat} ms" if avg_lat else "—"
-        st.markdown(metric_card("Latência Média", lat_str, "", "📶", "#ffa657"),
-                    unsafe_allow_html=True)
+        st.metric("Latência Média", f"{avg_lat} ms" if avg_lat else "—")
 
 
 # ------------------------------------------------------------------
