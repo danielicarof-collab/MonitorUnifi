@@ -84,8 +84,20 @@ class AuditEngine:
         Returns one of: phone, computer, tablet, gaming, tv, iot,
                         printer, camera, unknown
         """
-        # 1. UniFi fingerprint (dev_cat) — most authoritative when present
-        cat = (dev_cat or "").lower()
+        # 1. UniFi fingerprint (dev_cat) — pode ser int ou string dependendo do firmware
+        # Mapeamento numérico (UniFi OS 5.x retorna inteiros)
+        _int_map = {
+            0: "unknown", 1: "computer", 2: "phone", 3: "tablet",
+            4: "gaming",  5: "tv",       6: "iot",   7: "printer",
+            8: "camera",  9: "infrastructure",
+        }
+        if isinstance(dev_cat, int):
+            mapped = _int_map.get(dev_cat)
+            if mapped and mapped != "unknown":
+                return mapped
+            dev_cat = ""  # cai para hostname/vendor
+
+        cat = str(dev_cat or "").lower()
         cat_map = {
             "mobile":         "phone",
             "phone":          "phone",
