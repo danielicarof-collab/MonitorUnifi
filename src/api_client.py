@@ -102,8 +102,8 @@ class UniFiAPIClient:
 
     @property
     def _base_integrations_v1(self) -> str:
-        """Integrations API v1 — UniFi OS 5.x+ / Network 10.x+. Requer API Key."""
-        return f"{self.host}/proxy/network/integrations/v1/sites/{self.site}"
+        """Integrations API v1 — Network 10.1.84+. Requer API Key local (Settings → Integrations)."""
+        return f"{self.host}/proxy/network/integration/v1/sites/{self.site}"
 
     # ── autenticação ─────────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ class UniFiAPIClient:
 
         # ── Modo API Key: usa endpoint de integrations ────────────────
         if self._use_api_key:
-            url = f"{self.host}/proxy/network/integrations/v1/sites"
+            url = f"{self.host}/proxy/network/integration/v1/sites"
             resp = self._get_raw(url, _hdrs=self._headers_integrations())
             if resp and resp.status_code == 200:
                 try:
@@ -712,7 +712,7 @@ class UniFiAPIClient:
 
         # ── Integrations API v1 (API Key) ────────────────────────────────
         integrations_tests: List[Tuple[str, str]] = [
-            ("integrations_sites",    f"{self.host}/proxy/network/integrations/v1/sites"),
+            ("integrations_sites",    f"{self.host}/proxy/network/integration/v1/sites"),
             ("integrations_devices",  f"{self._base_integrations_v1}/devices"),
             ("integrations_networks", f"{self._base_integrations_v1}/networks"),
         ]
