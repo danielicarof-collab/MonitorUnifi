@@ -142,18 +142,18 @@ def _render_top_bandwidth(bw_df: pd.DataFrame) -> None:
     if bw_df.empty:
         st.info("Sem dados de largura de banda. Execute o collector primeiro.")
         return
-    if bw_df["total_rate"].sum() == 0:
+    if bw_df["total_rate"].sum() < 1024:  # menos de 1 KB/s total = ocioso
         st.info(
-            "Dados de throughput em tempo real indisponíveis agora. "
-            "Os campos `tx_bytes-r` / `rx_bytes-r` só ficam populados quando "
-            "há tráfego ativo no momento da coleta — aguarde o próximo ciclo."
+            "Nenhum tráfego ativo detectado agora. "
+            "Os campos `tx_bytes-r` / `rx_bytes-r` ficam populados apenas quando "
+            "há transferência em andamento — aguarde o próximo ciclo de coleta."
         )
         return
 
     df = bw_df.copy()
     df["label"]     = df["name"].fillna(df["mac"])
-    df["tx_mb"]     = df["tx_bytes_rate"].fillna(0) / 1_000_000
-    df["rx_mb"]     = df["rx_bytes_rate"].fillna(0) / 1_000_000
+    df["tx_mb"]     = df["tx_bytes_rate"].fillna(0).clip(lower=0) / 1_000_000
+    df["rx_mb"]     = df["rx_bytes_rate"].fillna(0).clip(lower=0) / 1_000_000
     df["tx_label"]  = df["tx_bytes_rate"].apply(fmt_bytes_rate)
     df["rx_label"]  = df["rx_bytes_rate"].apply(fmt_bytes_rate)
 

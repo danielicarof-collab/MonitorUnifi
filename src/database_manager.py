@@ -606,8 +606,8 @@ class DatabaseManager:
         df = self.get_latest_client_snapshots()
         if df.empty:
             return pd.DataFrame()
-        df["tx_bytes_rate"] = pd.to_numeric(df["tx_bytes_rate"], errors="coerce").fillna(0)
-        df["rx_bytes_rate"] = pd.to_numeric(df["rx_bytes_rate"], errors="coerce").fillna(0)
+        df["tx_bytes_rate"] = pd.to_numeric(df["tx_bytes_rate"], errors="coerce").fillna(0).clip(lower=0)
+        df["rx_bytes_rate"] = pd.to_numeric(df["rx_bytes_rate"], errors="coerce").fillna(0).clip(lower=0)
         df["total_rate"] = df["tx_bytes_rate"] + df["rx_bytes_rate"]
         return df.nlargest(limit, "total_rate")[
             ["mac", "name", "device_type", "ip",
