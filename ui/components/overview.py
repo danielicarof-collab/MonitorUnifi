@@ -14,7 +14,7 @@ from src.database_manager import DatabaseManager
 from ui.components.theme import (
     DEVICE_COLORS, DEVICE_ICONS,
     fmt_bytes, fmt_bytes_rate, fmt_uptime,
-    plotly_dark_layout,
+    plotly_dark_layout, utc_to_local,
 )
 
 
@@ -142,6 +142,13 @@ def _render_top_bandwidth(bw_df: pd.DataFrame) -> None:
     if bw_df.empty:
         st.info("Sem dados de largura de banda. Execute o collector primeiro.")
         return
+    if bw_df["total_rate"].sum() == 0:
+        st.info(
+            "Dados de throughput em tempo real indisponíveis agora. "
+            "Os campos `tx_bytes-r` / `rx_bytes-r` só ficam populados quando "
+            "há tráfego ativo no momento da coleta — aguarde o próximo ciclo."
+        )
+        return
 
     df = bw_df.copy()
     df["label"]     = df["name"].fillna(df["mac"])
@@ -244,15 +251,16 @@ def _render_snapshot_status(snap_df: pd.DataFrame) -> None:
         st.caption("Última coleta de snapshot: nenhuma ainda")
         return
     if "timestamp" in snap_df.columns:
-        last_ts = pd.to_datetime(snap_df["timestamp"]).max()
-        age_sec = (datetime.utcnow() - last_ts.to_pydatetime()).total_seconds()
+        last_ts_utc = pd.to_datetime(snap_df["timestamp"]).max().to_pydatetime()
+        last_ts_local = utc_to_local(last_ts_utc)
+        age_sec = (datetime.utcnow() - last_ts_utc).total_seconds()
         if age_sec < 60:
             age_str = f"{int(age_sec)}s atrás"
         elif age_sec < 3600:
             age_str = f"{int(age_sec // 60)}min atrás"
         else:
             age_str = f"{int(age_sec // 3600)}h atrás"
-        st.caption(f"Último snapshot: **{last_ts.strftime('%H:%M:%S')}** ({age_str})")
+        st.caption(f"Último snapshot: **{last_ts_local.strftime('%d/%m %H:%M:%S')}** ({age_str})")
 
 
 # ------------------------------------------------------------------

@@ -6,6 +6,8 @@ or once in app.py before routing.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import streamlit as st
 
 # ------------------------------------------------------------------
@@ -153,6 +155,24 @@ def fmt_bytes_rate(n: int | float | None) -> str:
     if n is None:
         return "—"
     return f"{fmt_bytes(n)}/s"
+
+
+def utc_to_local(dt: datetime | None) -> datetime | None:
+    """Convert a UTC-naive datetime to the server's local timezone."""
+    if dt is None:
+        return None
+    offset = datetime.now() - datetime.utcnow()
+    return dt + offset
+
+
+def fmt_datetime_local(
+    dt: datetime | None, fmt: str = "%d/%m/%Y %H:%M"
+) -> str:
+    """Format a UTC datetime as a local-time string for display."""
+    if dt is None:
+        return "—"
+    local = utc_to_local(dt)
+    return local.strftime(fmt) if local else "—"
 
 
 def fmt_uptime(seconds: int | None) -> str:

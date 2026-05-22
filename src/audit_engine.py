@@ -126,22 +126,27 @@ class AuditEngine:
         hn = (hostname or "").lower()
         hostname_rules = [
             ("phone",    ["iphone", "android", "pixel", "galaxy", "huawei-", "xiaomi",
-                          "mi-", "oneplus", "oppo", "vivo", "redmi"]),
-            ("tablet",   ["ipad", "tablet", "kindle"]),
+                          "mi-", "oneplus", "oppo", "vivo", "redmi", "moto", "nokia-",
+                          "sony-xperia", "lg-", "htc-", "poco", "realme-"]),
+            ("tablet",   ["ipad", "tablet", "kindle", "fire-hd", "surface-"]),
             ("computer", ["macbook", "imac", "mac-", "laptop", "thinkpad", "precision",
                           "latitude", "pavilion", "inspiron", "elitebook", "matebook",
-                          "zenbook", "desktop", "pc-"]),
+                          "zenbook", "desktop", "pc-", "workstation", "nuc-",
+                          "vivobook", "aspire", "swift-", "chromebook"]),
             ("gaming",   ["playstation", "ps4", "ps5", "xbox", "nintendo", "switch",
-                          "steamdeck"]),
+                          "steamdeck", "steam-deck", "retropie"]),
             ("tv",       ["appletv", "apple-tv", "firetv", "fire-tv", "chromecast",
-                          "roku", "shield", "androidtv", "smart-tv", "bravia"]),
+                          "roku", "shield", "androidtv", "smart-tv", "bravia",
+                          "lgtv", "samsungtv", "samsung-tv", "philips-tv", "tcl-"]),
             ("iot",      ["esp32", "esp8266", "arduino", "raspberry", "homeassist",
                           "sonoff", "tasmota", "shelly", "ring-", "nest-", "echo-",
-                          "alexa", "wemo"]),
+                          "alexa", "wemo", "tp-link", "tplink", "kasa-", "tuya-",
+                          "zigbee", "zwave", "smartplug", "smart-plug", "meross",
+                          "govee", "wyze-", "ewelink"]),
             ("printer",  ["printer", "print-", "hp-laser", "canon-", "epson-",
-                          "brother-"]),
+                          "brother-", "ricoh-", "xerox-", "kyocera-"]),
             ("camera",   ["ipcam", "hikvision", "dahua", "reolink", "eufy-cam",
-                          "arlo-"]),
+                          "arlo-", "amcrest", "axis-", "foscam", "tapo-"]),
         ]
         for dtype, patterns in hostname_rules:
             if any(p in hn for p in patterns):
@@ -155,19 +160,27 @@ class AuditEngine:
                 return "phone"
             return "computer"
         if any(x in v for x in ["samsung", "huawei", "xiaomi", "motorola",
-                                  "oneplus", "oppo", "vivo", "realme"]):
+                                  "oneplus", "oppo", "vivo", "realme", "nokia",
+                                  "google", "htc", "zte", "tcl communic"]):
             return "phone"
         if any(x in v for x in ["dell", "hewlett", "hp inc", "lenovo", "acer",
-                                  "asus tek"]):
+                                  "asus tek", "microsoft", "toshiba", "fujitsu",
+                                  "msi ", "gigabyte", "intel corp"]):
             return "computer"
-        if any(x in v for x in ["roku", "lg electron"]):
+        if any(x in v for x in ["roku", "lg electron", "vizio", "hisense",
+                                  "sharp", "philips", "tcl"]):
             return "tv"
-        if any(x in v for x in ["amazon", "espressif", "raspberry pi"]):
+        if any(x in v for x in ["amazon", "espressif", "raspberry pi",
+                                  "tp-link", "tuya", "shenzhen", "sonoff"]):
             return "iot"
-        if any(x in v for x in ["nintendo", "sony interac"]):
+        if any(x in v for x in ["nintendo", "sony interac", "valve"]):
             return "gaming"
-        if any(x in v for x in ["canon", "epson", "brother", "xerox", "ricoh"]):
+        if any(x in v for x in ["canon", "epson", "brother", "xerox", "ricoh",
+                                  "kyocera", "konica", "lexmark"]):
             return "printer"
+        if any(x in v for x in ["hikvision", "dahua", "axis communic",
+                                  "hanwha", "vivotek"]):
+            return "camera"
 
         return "unknown"
 

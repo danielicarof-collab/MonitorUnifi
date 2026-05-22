@@ -79,37 +79,37 @@ def _ap_card(row: pd.Series) -> str:
         ch_str += f" 5GHz→ch{ch_5g}"
 
     return f"""
-<div style="background:#111827; border:1px solid #1e3a5f; border-left:4px solid {sat_color};
+<div style="background:#f8f9fa; border:1px solid #dee2e6; border-left:4px solid {sat_color};
      border-radius:12px; padding:18px 22px; margin:6px 0;
-     box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+     box-shadow:0 2px 8px rgba(0,0,0,0.08);">
   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
     <div>
-      <div style="color:#e2e8f0; font-size:16px; font-weight:700;">{name}</div>
-      <div style="color:#6b7280; font-size:12px; margin-top:2px;">
+      <div style="color:#1a1a2e; font-size:16px; font-weight:700;">{name}</div>
+      <div style="color:#6c757d; font-size:12px; margin-top:2px;">
         {model} &nbsp;|&nbsp; {ip}
       </div>
     </div>
     <div style="text-align:right;">
       <div style="color:{sat_color}; font-size:18px; font-weight:700;">{sat_label}</div>
-      <div style="color:#94a3b8; font-size:11px;">satisfação</div>
+      <div style="color:#888; font-size:11px;">satisfação</div>
     </div>
   </div>
   <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-    <div style="background:#0d1117; border-radius:8px; padding:8px 12px;">
-      <div style="color:#94a3b8; font-size:11px; text-transform:uppercase;">Clientes</div>
-      <div style="color:#58a6ff; font-size:20px; font-weight:700;">{clients_total}</div>
-      <div style="color:#6b7280; font-size:11px;">
+    <div style="background:#ffffff; border:1px solid #e9ecef; border-radius:8px; padding:8px 12px;">
+      <div style="color:#888; font-size:11px; text-transform:uppercase;">Clientes</div>
+      <div style="color:#1976d2; font-size:20px; font-weight:700;">{clients_total}</div>
+      <div style="color:#6c757d; font-size:11px;">
         2.4G: {clients_24g} &nbsp;|&nbsp; 5G: {clients_5g}
         {f" &nbsp;|&nbsp; 6G: {clients_6g}" if clients_6g else ""}
       </div>
     </div>
-    <div style="background:#0d1117; border-radius:8px; padding:8px 12px;">
-      <div style="color:#94a3b8; font-size:11px; text-transform:uppercase;">Throughput</div>
-      <div style="color:#3fb950; font-size:13px; font-weight:600;">↓ {rx_rate}</div>
-      <div style="color:#ffa657; font-size:13px; font-weight:600;">↑ {tx_rate}</div>
+    <div style="background:#ffffff; border:1px solid #e9ecef; border-radius:8px; padding:8px 12px;">
+      <div style="color:#888; font-size:11px; text-transform:uppercase;">Throughput</div>
+      <div style="color:#2e7d32; font-size:13px; font-weight:600;">↓ {rx_rate}</div>
+      <div style="color:#e65100; font-size:13px; font-weight:600;">↑ {tx_rate}</div>
     </div>
   </div>
-  <div style="margin-top:8px; color:#6b7280; font-size:11px;">
+  <div style="margin-top:8px; color:#6c757d; font-size:11px;">
     ⏱ Uptime: {uptime}
     {f' &nbsp;|&nbsp; 📻 Canais:{ch_str}' if ch_str else ''}
   </div>
@@ -125,9 +125,13 @@ def _render_ap_cards(ap_df: pd.DataFrame) -> None:
     st.subheader("Dispositivos de Rede (APs / Switches / Gateways)")
 
     if ap_df.empty:
-        st.info(
-            "Nenhuma estatística de AP disponível.  "
-            "Execute `python run.py collect-once` para coletar dados dos dispositivos."
+        st.warning(
+            "**Nenhuma estatística de AP disponível.**\n\n"
+            "Possíveis causas:\n"
+            "- O collector ainda não rodou — execute `python run.py collect-once`\n"
+            "- O usuário UniFi não tem permissão para `/stat/device` "
+            "(use role **Administrator** ou **Read-Only Administrator**)\n"
+            "- Verifique os logs: `journalctl -u unifi-collector -n 30`"
         )
         return
 

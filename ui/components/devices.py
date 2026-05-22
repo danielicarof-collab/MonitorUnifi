@@ -11,7 +11,7 @@ from src.database_manager import DatabaseManager
 from ui.components.theme import (
     DEVICE_COLORS, DEVICE_ICONS,
     fmt_bytes_rate, fmt_uptime, signal_bar,
-    metric_card, plotly_dark_layout,
+    metric_card, plotly_dark_layout, fmt_datetime_local,
 )
 
 
@@ -129,7 +129,9 @@ def _render_all_tab(all_df: pd.DataFrame) -> None:
     df["Família"]    = df["dev_family"].fillna("—")
     df["Bloqueios"]  = df["total_blocks"].fillna(0).astype(int)
     df["Suspeito"]   = df["is_suspicious"].apply(lambda v: "⚠️ Sim" if v else "—")
-    df["Último Acesso"] = pd.to_datetime(df["last_seen"]).dt.strftime("%d/%m/%Y %H:%M")
+    df["Último Acesso"] = pd.to_datetime(df["last_seen"]).apply(
+        lambda dt: fmt_datetime_local(dt.to_pydatetime()) if pd.notna(dt) else "—"
+    )
 
     # Search/filter
     search = st.text_input("Buscar dispositivo (nome, MAC, IP, vendor)", "")

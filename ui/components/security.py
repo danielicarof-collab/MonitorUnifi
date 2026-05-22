@@ -197,6 +197,20 @@ def render(db: DatabaseManager) -> None:
     # ------------------------------------------------------------------
     # Suspicious devices detail — HTML red cards
     # ------------------------------------------------------------------
+    # IPS/IDS setup guide (shown when no threats recorded)
+    if threat_df.empty:
+        with st.expander("ℹ️ Como ativar IPS/IDS no UniFi para detectar ameaças"):
+            st.markdown(
+                "**Passos para ativar a detecção de intrusão (IPS/IDS):**\n\n"
+                "1. Acesse o **UniFi Console** → **Security** → **IPS/IDS**\n"
+                "2. Ative o modo **Detection** (detecta) ou **Prevention** (bloqueia)\n"
+                "3. Selecione a sensibilidade: recomendado **Medium** para início\n"
+                "4. Salve — eventos aparecerão aqui após o próximo ciclo de coleta\n\n"
+                "> **Nota:** IPS/IDS está disponível em UDM-Pro, UDM-SE e Dream Machine. "
+                "Requer hardware suficiente — verifique a carga da CPU antes de ativar "
+                "o modo Prevention em redes muito movimentadas."
+            )
+
     st.subheader("Dispositivos Suspeitos")
     st.caption(
         "Marcados automaticamente quando um dispositivo dispara múltiplos "
@@ -215,28 +229,28 @@ def render(db: DatabaseManager) -> None:
             last_seen = str(row.get("last_seen") or "—")
 
             card_html = f"""
-<div style="background:#1a0d0d; border:1px solid #ff7b72; border-left:4px solid #ff7b72;
+<div style="background:#fff5f5; border:1px solid #feb2b2; border-left:4px solid #e53e3e;
      border-radius:12px; padding:16px 20px; margin:6px 0;
-     box-shadow:0 4px 12px rgba(255,123,114,0.15);">
+     box-shadow:0 2px 8px rgba(229,62,62,0.1);">
   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
     <div>
-      <div style="color:#ff7b72; font-size:15px; font-weight:700;">
+      <div style="color:#c53030; font-size:15px; font-weight:700;">
         🔴 {name_str}
       </div>
-      <div style="color:#6b7280; font-size:12px; margin-top:4px;">
-        MAC: <code style="color:#94a3b8;">{mac_str}</code>
+      <div style="color:#6c757d; font-size:12px; margin-top:4px;">
+        MAC: <code style="color:#555;">{mac_str}</code>
         &nbsp;|&nbsp; IP: {ip_str}
       </div>
-      <div style="color:#94a3b8; font-size:12px; margin-top:6px;">
+      <div style="color:#555; font-size:12px; margin-top:6px;">
         <b>Motivo:</b> {reason}
       </div>
-      <div style="color:#6b7280; font-size:11px; margin-top:4px;">
+      <div style="color:#888; font-size:11px; margin-top:4px;">
         Último visto: {last_seen}
       </div>
     </div>
     <div style="text-align:right; min-width:80px;">
-      <div style="color:#ff7b72; font-size:28px; font-weight:800;">{blocks}</div>
-      <div style="color:#94a3b8; font-size:11px;">bloqueios</div>
+      <div style="color:#c53030; font-size:28px; font-weight:800;">{blocks}</div>
+      <div style="color:#888; font-size:11px;">bloqueios</div>
     </div>
   </div>
 </div>

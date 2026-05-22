@@ -144,7 +144,7 @@ class DataCollector:
             self._db.upsert_client(data)
 
         self._client_map = self._db.get_all_clients_map()
-        logger.debug("Client registry synced: {} devices", len(merged))
+        logger.info("Client registry synced: {} devices", len(merged))
 
     # ------------------------------------------------------------------
     # Step 2: WAN status snapshot
@@ -169,7 +169,7 @@ class DataCollector:
                 "wan_ip":    subsystem.get("wan_ip"),
                 "timestamp": ts,
             })
-        logger.debug("WAN status snapshot saved")
+        logger.info("WAN status snapshot saved")
 
     # ------------------------------------------------------------------
     # Step 3: Security events — system-log v2 com fallback para v1
@@ -622,9 +622,9 @@ class DataCollector:
                 "is_wired":      is_wired,
                 "uptime_sec":    c.get("uptime"),
             })
+        logger.info("Client snapshots collected: {} active clients", len(records))
         if records:
             self._db.insert_client_snapshots(records)
-            logger.debug("Client snapshots saved: {} entries", len(records))
 
     # ------------------------------------------------------------------
     # Step 5b: AP stats snapshot
@@ -671,7 +671,7 @@ class DataCollector:
                 "channel_5g":      channel_5g,
             })
             count += 1
-        logger.debug("AP stats saved: {} devices", count)
+        logger.info("AP stats saved: {} UniFi devices", count)
 
     # ------------------------------------------------------------------
     # Step 5c: Rogue AP scan
@@ -692,8 +692,7 @@ class DataCollector:
                 "is_rogue": r.get("is_rogue", False),
                 "ap_mac":   (r.get("ap_mac") or "").lower() or None,
             })
-        if rogue_list:
-            logger.debug("Rogue APs updated: {} entries", len(rogue_list))
+        logger.info("Rogue AP scan: {} entries found", len(rogue_list))
 
     # ------------------------------------------------------------------
     # Step 4: DPI traffic snapshot
