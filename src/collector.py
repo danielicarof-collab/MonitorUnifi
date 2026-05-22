@@ -594,13 +594,24 @@ class DataCollector:
     # ------------------------------------------------------------------
 
     def _collect_client_snapshots(self) -> None:
-        active = self._api.get_active_clients()
+        # v2 endpoint has tx/rx rates even when v1 fields are absent (firmware 8.4+)
+        active = self._api.get_active_clients_v2() or self._api.get_active_clients()
         records = []
         _RADIO_MAP = {"ng": "2.4 GHz", "na": "5 GHz", "6e": "6 GHz"}
         for c in active:
             mac = (c.get("mac") or "").lower()
             if not mac:
                 continue
+
+            # Newer firmware reports type=WIRED for all clients including WiFi devices.
+            # Use device-type inference to override for devices that are always wireless.
+            fp = c.get("fingerprint") or {}
+            dev_cat = fp.get("dev_cat", "") if isinstance(fp, dict) else (fp or "")
+            device_type = AuditEngine.infer_device_type(
+                dev_cat=dev_cat,
+                vendor=c.get("oui") or c.get("dev_vendor", ""),
+                hostname=c.get("hostname") or c.get("display_name", ""),
+            )
             _iw = c.get("is_wired")
             if isinstance(_iw, bool):
                 is_wired = _iw
@@ -610,26 +621,38 @@ class DataCollector:
                 is_wired = _iw.lower() in ("1", "true", "yes")
             else:
                 is_wired = False
-            # Presence of radio/essid is definitive proof of WiFi
+            # Radio/essid present → definitive WiFi (v1 firmware)
             if c.get("radio") or c.get("essid"):
                 is_wired = False
+            # Phones and tablets can never be wired
+            if device_type in ("phone", "tablet"):
+                is_wired = False
+
             radio_raw = c.get("radio", "")
             radio_band = "Wired" if is_wired else _RADIO_MAP.get(radio_raw, radio_raw or "Wi-Fi")
-            tx_rate_kbps = c.get("tx_rate")
-            rx_rate_kbps = c.get("rx_rate")
+
+            # v2 uses tx_bytes-r / rx_bytes-r directly; clip negatives
+            tx_br = c.get("tx_bytes-r")
+            rx_br = c.get("rx_bytes-r")
+            tx_bytes_rate = max(0, tx_br) if tx_br is not None else None
+            rx_bytes_rate = max(0, rx_br) if rx_br is not None else None
+
+            # essid: direct field (v1) or network_name for non-wired (v2)
+            essid = c.get("essid") or (c.get("network_name") if not is_wired else None)
+
             records.append({
                 "client_mac":    mac,
                 "signal":        c.get("signal"),
                 "noise":         c.get("noise"),
-                "tx_rate":       (tx_rate_kbps / 1000) if tx_rate_kbps else None,
-                "rx_rate":       (rx_rate_kbps / 1000) if rx_rate_kbps else None,
-                "satisfaction":  c.get("satisfaction"),
-                "tx_bytes_rate": c.get("tx_bytes-r"),
-                "rx_bytes_rate": c.get("rx_bytes-r"),
-                "ap_mac":        (c.get("ap_mac") or "").lower() or None,
+                "tx_rate":       None,
+                "rx_rate":       None,
+                "satisfaction":  c.get("satisfaction") or c.get("satisfaction_avg"),
+                "tx_bytes_rate": tx_bytes_rate,
+                "rx_bytes_rate": rx_bytes_rate,
+                "ap_mac":        (c.get("ap_mac") or c.get("uplink_mac") or c.get("last_uplink_mac") or "").lower() or None,
                 "radio_band":    radio_band,
                 "channel":       c.get("channel"),
-                "essid":         c.get("essid"),
+                "essid":         essid,
                 "is_wired":      is_wired,
                 "uptime_sec":    c.get("uptime"),
             })

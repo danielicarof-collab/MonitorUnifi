@@ -380,6 +380,23 @@ class UniFiAPIClient:
         result = self._request("GET", "/stat/sta")
         return result if isinstance(result, list) else []
 
+    def get_active_clients_v2(self) -> List[Dict]:
+        """v2 endpoint (UniFi Network 8.4+) — returns tx/rx rates even when v1 fields are empty."""
+        try:
+            url = f"{self._base_v2}/clients/active"
+            resp = self._session.get(
+                url,
+                headers={"X-Csrf-Token": self._csrf_token or ""},
+                verify=self.verify_ssl,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+        except Exception as exc:
+            logger.debug("v2 clients/active failed: {}", exc)
+        return []
+
     def get_known_clients(self) -> List[Dict]:
         result = self._request("GET", "/rest/user")
         return result if isinstance(result, list) else []
