@@ -155,21 +155,38 @@ class DataCollector:
 
     def _collect_wan_status(self) -> None:
         health_data = self._api.get_health()
+        devices     = self._api.get_devices()
         ts = datetime.utcnow()
+
+        # Build supplemental latency + IP map from /stat/device wan1/wan2 fields
+        device_wan: Dict[str, Dict] = {}
+        for dev in devices:
+            for iface_key, label in (("wan1", "WAN"), ("wan2", "WAN2")):
+                wan_data = dev.get(iface_key)
+                if isinstance(wan_data, dict):
+                    device_wan[label] = wan_data
 
         for subsystem in health_data:
             sub = subsystem.get("subsystem", "").lower()
             if sub not in ("wan", "wan2"):
                 continue
 
+            label   = "WAN2" if sub == "wan2" else "WAN"
+            dev_wan = device_wan.get(label, {})
+
+            # Latency: prefer health API value, fall back to device wan data
+            latency = subsystem.get("latency") or dev_wan.get("latency")
+            # WAN IP: prefer health API, fall back to device
+            wan_ip  = subsystem.get("wan_ip") or dev_wan.get("ip")
+
             self._db.insert_wan_status({
-                "interface": "WAN2" if sub == "wan2" else "WAN",
+                "interface": label,
                 "status":    subsystem.get("status", "unknown"),
                 "uptime":    subsystem.get("uptime"),
-                "latency":   subsystem.get("latency"),
+                "latency":   latency,
                 "rx_bytes":  subsystem.get("rx_bytes-r"),
                 "tx_bytes":  subsystem.get("tx_bytes-r"),
-                "wan_ip":    subsystem.get("wan_ip"),
+                "wan_ip":    wan_ip,
                 "timestamp": ts,
             })
         logger.debug("WAN status snapshot saved")
@@ -797,14 +814,17 @@ class DataCollector:
                 continue
 
             # ── CPU / memória ────────────────────────────────────────────
-            sys_stats = dev.get("sys_stats") or {}
+            # UniFi Network API uses "system-stats" (with hyphen) as the key
+            sys_stats = dev.get("system-stats") or dev.get("sys_stats") or {}
             cpu_pct = None
             mem_pct = None
             try:
-                if sys_stats.get("cpu") is not None:
-                    cpu_pct = float(sys_stats["cpu"])
-                if sys_stats.get("mem") is not None:
-                    mem_pct = float(sys_stats["mem"])
+                raw_cpu = sys_stats.get("cpu")
+                raw_mem = sys_stats.get("mem")
+                if raw_cpu is not None:
+                    cpu_pct = float(raw_cpu)
+                if raw_mem is not None:
+                    mem_pct = float(raw_mem)
             except (TypeError, ValueError):
                 pass
 

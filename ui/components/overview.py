@@ -14,7 +14,7 @@ from src.database_manager import DatabaseManager
 from ui.components.theme import (
     DEVICE_COLORS, DEVICE_ICONS,
     fmt_bytes, fmt_bytes_rate, fmt_uptime,
-    plotly_dark_layout,
+    plotly_dark_layout, metric_card,
 )
 
 
@@ -63,20 +63,29 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
 
     cols = st.columns(len(wan_df))
     for col, (_, row) in zip(cols, wan_df.iterrows()):
-        is_ok = row.get("status") == "ok"
-        badge = "🟢 Online" if is_ok else "🔴 Offline"
+        is_ok  = str(row.get("status", "")).lower() == "ok"
+        badge  = "🟢 Online" if is_ok else "🔴 Offline"
+        iface  = row.get("interface", "WAN")
+        lat    = row.get("latency_ms")
+        lat_str = f"{int(lat)} ms" if lat is not None else "—"
+        uptime_str = fmt_uptime(row.get("uptime"))
+        rx_str = fmt_bytes_rate(row.get("rx_bytes"))
+        tx_str = fmt_bytes_rate(row.get("tx_bytes"))
+        color  = "#3fb950" if is_ok else "#ff7b72"
+
         with col:
-            st.metric(
-                label=f"**{row['interface']}** — {badge}",
-                value=row.get("wan_ip") or "—",
-                help="IP público atual",
+            st.markdown(
+                metric_card(
+                    title    = iface,
+                    value    = row.get("wan_ip") or "—",
+                    subtitle = badge,
+                    icon     = "🌐",
+                    color    = color,
+                ),
+                unsafe_allow_html=True,
             )
-            st.caption(f"Latência: **{row.get('latency_ms') or '—'} ms**")
-            st.caption(f"Uptime: **{fmt_uptime(row.get('uptime'))}**")
-            st.caption(
-                f"↓ {fmt_bytes(row.get('rx_bytes'))}  "
-                f"↑ {fmt_bytes(row.get('tx_bytes'))}"
-            )
+            st.caption(f"Latência: **{lat_str}**  |  Uptime: **{uptime_str}**")
+            st.caption(f"↓ {rx_str}  ↑ {tx_str}")
 
 
 # ------------------------------------------------------------------
