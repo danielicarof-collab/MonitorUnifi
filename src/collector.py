@@ -176,21 +176,23 @@ class DataCollector:
 
             label   = "WAN2" if sub == "wan2" else "WAN"
             dev_wan = device_wan.get(label, {})
-            logger.debug("{} health subsystem keys: {}", label, sorted(subsystem.keys()))
-            logger.debug("{} device wan keys: {}", label, sorted(dev_wan.keys()))
 
-            # Latency: health API first, then multiple field names from device data
+            # Latency: health API first, then device wan1/wan2 data
             latency = (
                 subsystem.get("latency")
                 or dev_wan.get("latency")
                 or dev_wan.get("latency_ms")
-                or dev_wan.get("ping")
             )
-            # Uptime: health API first, then device wan uptime
-            uptime = (
-                subsystem.get("uptime")
-                or dev_wan.get("uptime")
-            )
+            # Uptime: health API has no direct 'uptime' field;
+            # gw_system-stats.uptime is the device uptime (string, e.g. "287874")
+            gw_stats   = subsystem.get("gw_system-stats") or {}
+            gw_uptime_raw = gw_stats.get("uptime")
+            uptime = None
+            if gw_uptime_raw is not None:
+                try:
+                    uptime = int(float(gw_uptime_raw))
+                except (TypeError, ValueError):
+                    pass
             wan_ip = subsystem.get("wan_ip") or dev_wan.get("ip")
 
             self._db.insert_wan_status({
@@ -206,23 +208,33 @@ class DataCollector:
             saved_ifaces.add(label)
 
         # Fallback: device wan1/wan2 data for any WAN the health API missed
+        # Get device uptime to use as WAN uptime proxy
+        device_uptime: Optional[int] = None
+        for dev in devices:
+            raw = (dev.get("system-stats") or dev.get("sys_stats") or {}).get("uptime")
+            if raw is not None:
+                try:
+                    device_uptime = int(float(raw))
+                except (TypeError, ValueError):
+                    pass
+                break
+
         for label, dev_wan in device_wan.items():
             if label in saved_ifaces:
                 continue
-            wan_ip = dev_wan.get("ip") or dev_wan.get("wan_ip")
-            latency = dev_wan.get("latency")
+            wan_ip  = dev_wan.get("ip") or dev_wan.get("wan_ip")
+            latency = dev_wan.get("latency") or dev_wan.get("latency_ms")
             avail   = dev_wan.get("availability", 0)
-            # Only create a record if this interface has meaningful data
             if not wan_ip and latency is None:
                 continue
             status = "ok" if (avail and float(avail) > 0) else "unknown"
             self._db.insert_wan_status({
                 "interface": label,
                 "status":    status,
-                "uptime":    None,
+                "uptime":    device_uptime,
                 "latency":   latency,
-                "rx_bytes":  None,
-                "tx_bytes":  None,
+                "rx_bytes":  dev_wan.get("rx_bytes-r"),
+                "tx_bytes":  dev_wan.get("tx_bytes-r"),
                 "wan_ip":    wan_ip,
                 "timestamp": ts,
             })

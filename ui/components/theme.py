@@ -132,7 +132,13 @@ def fmt_uptime(seconds: int | None) -> str:
     """Format seconds into 'Xd Xh Xm' string."""
     if seconds is None:
         return "—"
-    d, rem = divmod(int(seconds), 86400)
+    try:
+        seconds = int(float(seconds))
+    except (TypeError, ValueError):
+        return "—"
+    if math.isnan(float(seconds)) if isinstance(seconds, float) else False:
+        return "—"
+    d, rem = divmod(seconds, 86400)
     h, rem = divmod(rem, 3600)
     m, _   = divmod(rem, 60)
     parts = []
