@@ -1214,75 +1214,60 @@ class DataCollector:
         if s2s_list:
             logger.info("VPN: {} túneis site-to-site via /stat/ipsecvpn", len(s2s_list))
 
-        # ── 3. System-log VPN — fallback quando /stat/ipsecvpn está vazio ──
-        # syslog_vpn (via run.py diagnose) confirma que há entradas VPN.
-        # Aqui extraímos o status mais recente por túnel a partir dos eventos.
+        # ── 3. System-log VPN + /stat/health ─────────────────────────────
+        # Formato dos eventos (Network 10.3.58 / firmware 5.0.16):
+        #   event: "VPN_SITE_TO_SITE_CONNECTED" | "VPN_SITE_TO_SITE_DISCONNECTED"
+        #   parameters.NETWORK.name  → nome do túnel (ex: "VIVO-DC")
+        #   parameters.REMOTE_IP.name → IP remoto
+        #   parameters.WAN_ID.name   → interface WAN usada
+        #
+        # O syslog só armazena eventos não-reconhecidos (status=NEW). Eventos
+        # de reconexão são purgados rapidamente → não refletem estado ATUAL.
+        # Por isso usamos o syslog apenas para descobrir nomes/IPs dos túneis
+        # e o /stat/health para confirmar o estado operacional corrente.
         if not s2s_list:
+            import time as _time
             vpn_events = self._api.get_vpn_syslog_events(page_size=200)
-            if vpn_events:
-                logger.info("VPN: {} eventos syslog encontrados — analisando…", len(vpn_events))
-                # Log todos os campos de cada evento para descobrir o formato
-                for i, ev in enumerate(vpn_events):
-                    logger.info("VPN syslog ev[{}]: {}", i, ev)
 
-                # Ordenar por timestamp crescente → último evento por túnel = estado atual
-                tunnel_states: Dict[str, Dict] = {}
-                for ev in sorted(vpn_events, key=lambda e: e.get("timestamp", 0)):
-                    # Campos possíveis dependendo do firmware
-                    msg = str(
-                        ev.get("msg") or ev.get("message")
-                        or ev.get("description") or ev.get("text") or ""
-                    ).lower()
-                    # Nome do túnel — vários campos possíveis
-                    tname = (
-                        ev.get("tunnel_name") or ev.get("name")
-                        or ev.get("vpn_name")  or ev.get("peer_name")
-                        or ev.get("conn_name")
-                    )
-                    if not tname:
-                        # Tentar extrair do campo msg (ex: "VIVO-DC connected")
-                        for word in msg.split():
-                            if "-" in word and word.replace("-","").replace("_","").isalnum():
-                                tname = word.upper()
-                                break
-                    if not tname:
-                        tname = ev.get("key") or ev.get("type") or "VPN"
+            # Extrair metadados dos túneis (nome, IP remoto, WAN) do syslog
+            tunnel_meta: Dict[str, Dict] = {}
+            for ev in vpn_events:
+                params  = ev.get("parameters") or {}
+                network = params.get("NETWORK") or {}
+                tname   = network.get("name")
+                if not tname:
+                    continue
+                if tname not in tunnel_meta:
+                    tunnel_meta[tname] = {
+                        "remote_ip": (params.get("REMOTE_IP") or {}).get("name"),
+                        "wan":       (params.get("WAN_ID")    or {}).get("name"),
+                        "vpn_type":  network.get("vpn_type", "ipsec-vpn"),
+                    }
 
-                    connected = any(w in msg for w in (
-                        "established", "connected", "up ", "online", "active",
-                        "iniciado", "estabelecido",
-                    ))
-                    disconnected = any(w in msg for w in (
-                        "disconnect", "down", "fail", "error", "close",
-                        "desconectado", "encerrado",
-                    ))
-                    if connected:
-                        tunnel_states[tname] = {
-                            "status":    "running",
-                            "remote_ip": ev.get("remote_ip") or ev.get("peer_ip"),
-                            "uptime":    None,
-                        }
-                    elif disconnected:
-                        tunnel_states[tname] = {
-                            "status":    "down",
-                            "remote_ip": ev.get("remote_ip") or ev.get("peer_ip"),
-                            "uptime":    None,
-                        }
+            if tunnel_meta:
+                # Verificar status atual via /stat/health (subsistema VPN)
+                # → status "ok" = pelo menos um túnel operacional
+                health_data = self._api.get_health()
+                vpn_health_ok = False
+                for sub in health_data:
+                    if sub.get("subsystem", "").lower() == "vpn":
+                        vpn_health_ok = str(sub.get("status", "")).lower() == "ok"
+                        logger.debug("VPN: health subsystem vpn status={}", sub.get("status"))
+                        break
 
-                for tname, state in tunnel_states.items():
+                status_str = "running" if vpn_health_ok else "down"
+                for tname, meta in tunnel_meta.items():
                     records.append({
                         "tunnel_name": tname,
-                        "status":      state["status"],
-                        "remote_ip":   state.get("remote_ip"),
-                        "uptime":      state.get("uptime"),
+                        "status":      status_str,
+                        "remote_ip":   meta["remote_ip"],
+                        "uptime":      None,
                     })
-                if tunnel_states:
-                    logger.info("VPN: {} túneis derivados do syslog", len(tunnel_states))
-                else:
-                    logger.debug(
-                        "VPN: syslog retornou {} eventos mas não foi possível extrair status",
-                        len(vpn_events),
-                    )
+                logger.info(
+                    "VPN: {} túneis ({}) via syslog+health",
+                    len(tunnel_meta),
+                    "online" if vpn_health_ok else "offline",
+                )
 
         # ── 4. Dados de VPN embarcados no device (gateway) ────────────
         if not records:
