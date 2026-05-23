@@ -1125,7 +1125,7 @@ class DataCollector:
         """
         rules = self._api.get_firewall_rules()
         if not rules:
-            logger.debug("Firewall rules: nenhuma regra ou endpoint indisponível")
+            logger.info("Firewall rules: endpoint /rest/firewallrule sem dados (vazio ou 404)")
             return
         for rule in rules:
             self._db.upsert_firewall_rule(rule)
@@ -1142,7 +1142,7 @@ class DataCollector:
         """
         rules = self._api.get_port_forwards()
         if not rules:
-            logger.debug("Port forwards: nenhuma regra ou endpoint indisponível")
+            logger.info("Port forwards: endpoint /list/portforward sem dados (vazio ou 404)")
             return
         for rule in rules:
             self._db.upsert_port_forward(rule)
@@ -1221,9 +1221,9 @@ class DataCollector:
             vpn_events = self._api.get_vpn_syslog_events(page_size=200)
             if vpn_events:
                 logger.info("VPN: {} eventos syslog encontrados — analisando…", len(vpn_events))
-                # Log primeiros eventos para depuração (DEBUG)
-                for ev in vpn_events[:3]:
-                    logger.debug("VPN syslog ev: {}", ev)
+                # Log todos os campos de cada evento para descobrir o formato
+                for i, ev in enumerate(vpn_events):
+                    logger.info("VPN syslog ev[{}]: {}", i, ev)
 
                 # Ordenar por timestamp crescente → último evento por túnel = estado atual
                 tunnel_states: Dict[str, Dict] = {}
