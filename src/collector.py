@@ -79,8 +79,9 @@ class DataCollector:
             self._sync_clients()
             self._collect_client_snapshots()
             self._collect_wan_status()
-            self._collect_device_statistics()  # NOVO: Estatísticas detalhadas de dispositivos
-            self._collect_network_statistics()  # NOVO: Estatísticas de redes
+            self._collect_device_statistics()
+            self._collect_port_stats()
+            self._collect_network_statistics()
             self._process_events()
             self._collect_dpi()
             self._collect_ap_stats()
@@ -765,85 +766,222 @@ class DataCollector:
         return mapping.get(str(proto), str(proto))
 
     # ------------------------------------------------------------------
-    # Step X: Device Statistics Collection (NEW)
+    # Device statistics — CPU, memory, temperature, speedtest
+    # Reads from /stat/device (legacy API — no API Key needed)
     # ------------------------------------------------------------------
 
     def _collect_device_statistics(self) -> None:
         """
-        Coleta estatísticas detalhadas de hardware e rádio para todos os dispositivos UniFi.
-        Inclui CPU, memória, carga, TX retries e frequências de operação.
+        Coleta CPU, memória, temperatura e uptime de todos os dispositivos UniFi
+        a partir do endpoint legado /stat/device.
+
+        Campos extraídos do JSON:
+          sys_stats.cpu        → cpu_utilization_pct
+          sys_stats.mem        → memory_utilization_pct
+          temperatures[]       → temp_cpu, temp_board, temp_phy
+          uplink.xput_down     → speedtest download (Mbps)
+          uplink.xput_up       → speedtest upload  (Mbps)
+          uplink.speedtest_ping→ speedtest ping    (ms)
         """
-        devices_stats = self._api.get_all_devices_statistics()
-        if not devices_stats:
-            logger.debug("Nenhuma estatística de dispositivo disponível")
+        devices = self._api.get_devices()
+        if not devices:
+            logger.debug("Nenhum dispositivo disponível para coleta de estatísticas")
             return
 
         ts = datetime.utcnow()
-        for device_stat in devices_stats:
-            device_mac = device_stat.get("mac", "").lower()
-            if not device_mac:
+        speedtest_records: List[Dict] = []
+
+        for dev in devices:
+            mac = (dev.get("mac") or "").lower()
+            if not mac:
                 continue
 
-            # Extrai métricas de rádio (2.4GHz, 5GHz, 6GHz)
-            tx_retries_24g = None
-            tx_retries_5g = None
-            tx_retries_6g = None
-            freq_24g = None
-            freq_5g = None
-            freq_6g = None
+            # ── CPU / memória ────────────────────────────────────────────
+            sys_stats = dev.get("sys_stats") or {}
+            cpu_pct = None
+            mem_pct = None
+            try:
+                if sys_stats.get("cpu") is not None:
+                    cpu_pct = float(sys_stats["cpu"])
+                if sys_stats.get("mem") is not None:
+                    mem_pct = float(sys_stats["mem"])
+            except (TypeError, ValueError):
+                pass
 
-            interfaces = device_stat.get("interfaces", {})
-            if isinstance(interfaces, dict):
-                radios = interfaces.get("radios", [])
-                if isinstance(radios, list):
-                    for radio in radios:
-                        freq = radio.get("frequencyGHz")
-                        tx_retries = radio.get("txRetriesPct")
-                        
-                        if freq and tx_retries is not None:
-                            if freq < 3:  # 2.4GHz
-                                freq_24g = freq
-                                tx_retries_24g = tx_retries
-                            elif freq < 6:  # 5GHz
-                                freq_5g = freq
-                                tx_retries_5g = tx_retries
-                            else:  # 6GHz
-                                freq_6g = freq
-                                tx_retries_6g = tx_retries
+            # ── Temperatura ──────────────────────────────────────────────
+            temp_cpu = temp_board = temp_phy = None
+            for t in dev.get("temperatures") or []:
+                t_type = str(t.get("type", "")).lower()
+                t_val  = t.get("value")
+                if t_val is None:
+                    continue
+                try:
+                    t_val = float(t_val)
+                except (TypeError, ValueError):
+                    continue
+                if t_type == "cpu":
+                    temp_cpu = t_val
+                elif t_type == "board":
+                    # UniFi names: "Local" and "PHY" are both board-type
+                    t_name = str(t.get("name", "")).lower()
+                    if "phy" in t_name:
+                        temp_phy = t_val
+                    else:
+                        temp_board = t_val
 
-            # Insere o registro de estatísticas do dispositivo
+            # ── Rádio: TX retries por banda ──────────────────────────────
+            tx_retries_24g = tx_retries_5g = tx_retries_6g = None
+            freq_24g = freq_5g = freq_6g = None
+            for radio in dev.get("radio_table_stats") or []:
+                name = radio.get("name", "")
+                # tx_retries is a running counter; use satisfaction as quality proxy
+                retries = radio.get("tx_retries")
+                tx_pkts = radio.get("tx_packets") or radio.get("tx_pkts")
+                if retries and tx_pkts and tx_pkts > 0:
+                    pct = round(retries / tx_pkts * 100, 2)
+                else:
+                    pct = None
+                freq = radio.get("current_freq") or radio.get("freq")
+                try:
+                    freq = float(freq) / 1000 if freq and float(freq) > 1000 else (float(freq) if freq else None)
+                except (TypeError, ValueError):
+                    freq = None
+                if name == "ng":
+                    tx_retries_24g, freq_24g = pct, freq
+                elif name == "na":
+                    tx_retries_5g, freq_5g = pct, freq
+                elif name in ("6e", "6g"):
+                    tx_retries_6g, freq_6g = pct, freq
+
+            # ── Speedtest (embedded in uplink) ───────────────────────────
+            uplink = dev.get("uplink") or {}
+            sp_down = uplink.get("xput_down")   # Mbps float
+            sp_up   = uplink.get("xput_up")     # Mbps float
+            sp_ping = uplink.get("speedtest_ping") or uplink.get("latency")
+            if sp_down or sp_up:
+                speedtest_records.append({
+                    "interface":     "WAN",
+                    "ping_ms":       float(sp_ping) if sp_ping else None,
+                    "download_mbps": float(sp_down) if sp_down else None,
+                    "upload_mbps":   float(sp_up)   if sp_up   else None,
+                    "wan_ip":        uplink.get("ip") or dev.get("wan1", {}).get("ip"),
+                    "timestamp":     ts,
+                })
+
             self._db.insert_device_stat({
-                "device_mac": device_mac,
-                "device_name": device_stat.get("name"),
-                "device_model": device_stat.get("model"),
-                "device_ip": device_stat.get("ip"),
-                "cpu_utilization_pct": device_stat.get("cpuUtilizationPct"),
-                "memory_utilization_pct": device_stat.get("memoryUtilizationPct"),
-                "load_average_1min": device_stat.get("loadAverage1Min"),
-                "load_average_5min": device_stat.get("loadAverage5Min"),
-                "load_average_15min": device_stat.get("loadAverage15Min"),
-                "uptime_sec": device_stat.get("uptimeSec"),
-                "last_heartbeat_at": device_stat.get("lastHeartbeatAt"),
-                "tx_retries_pct_24g": tx_retries_24g,
-                "tx_retries_pct_5g": tx_retries_5g,
-                "tx_retries_pct_6g": tx_retries_6g,
-                "frequency_24g": freq_24g,
-                "frequency_5g": freq_5g,
-                "frequency_6g": freq_6g,
-                "tx_rate_bps": device_stat.get("uplink", {}).get("txRateBps"),
-                "rx_rate_bps": device_stat.get("uplink", {}).get("rxRateBps"),
-                "timestamp": ts,
+                "device_mac":            mac,
+                "device_name":           dev.get("name") or dev.get("hostname"),
+                "device_model":          dev.get("model"),
+                "device_ip":             dev.get("ip"),
+                "cpu_utilization_pct":   cpu_pct,
+                "memory_utilization_pct": mem_pct,
+                "load_average_1min":     None,  # not available from legacy API
+                "load_average_5min":     None,
+                "load_average_15min":    None,
+                "uptime_sec":            dev.get("uptime"),
+                "last_heartbeat_at":     None,
+                "temp_cpu":              temp_cpu,
+                "temp_board":            temp_board,
+                "temp_phy":              temp_phy,
+                "tx_retries_pct_24g":    tx_retries_24g,
+                "tx_retries_pct_5g":     tx_retries_5g,
+                "tx_retries_pct_6g":     tx_retries_6g,
+                "frequency_24g":         freq_24g,
+                "frequency_5g":          freq_5g,
+                "frequency_6g":          freq_6g,
+                "tx_rate_bps":           dev.get("tx_bytes-r"),
+                "rx_rate_bps":           dev.get("rx_bytes-r"),
+                "timestamp":             ts,
             })
 
-        logger.debug("Device statistics snapshot saved for {} devices", len(devices_stats))
+        logger.debug("Device statistics snapshot saved for {} devices", len(devices))
+
+        # Persist speedtest only when new values differ from last known result
+        if speedtest_records:
+            last = self._db.get_latest_speedtest()
+            latest = speedtest_records[0]
+            if (
+                last is None
+                or last.get("download_mbps") != latest.get("download_mbps")
+                or last.get("upload_mbps")   != latest.get("upload_mbps")
+            ):
+                self._db.insert_speedtest_result(latest)
+                logger.info(
+                    "Speedtest result: ↓{:.1f} Mbps  ↑{:.1f} Mbps  ping {:.0f} ms",
+                    latest.get("download_mbps") or 0,
+                    latest.get("upload_mbps")   or 0,
+                    latest.get("ping_ms")        or 0,
+                )
 
     # ------------------------------------------------------------------
-    # Step Y: Network Statistics Collection (NEW)
+    # Port statistics — per-port rx/tx bytes, errors, drops
+    # ------------------------------------------------------------------
+
+    def _collect_port_stats(self) -> None:
+        """
+        Coleta estatísticas por porta de todos os dispositivos UniFi
+        (switches, gateways) a partir do campo port_table em /stat/device.
+        """
+        devices = self._api.get_devices()
+        if not devices:
+            return
+
+        for dev in devices:
+            mac = (dev.get("mac") or "").lower()
+            if not mac:
+                continue
+            port_table = dev.get("port_table") or []
+            if not port_table:
+                continue
+
+            records: List[Dict] = []
+            for port in port_table:
+                port_idx = port.get("port_idx") or port.get("ifindex")
+                if port_idx is None:
+                    continue
+
+                # PoE power: may be in mW or W depending on firmware
+                poe_raw = port.get("poe_power")
+                poe_w: Optional[float] = None
+                if poe_raw is not None:
+                    try:
+                        poe_w = float(poe_raw)
+                        if poe_w > 500:   # likely in mW
+                            poe_w /= 1000
+                    except (TypeError, ValueError):
+                        pass
+
+                records.append({
+                    "device_mac":   mac,
+                    "port_idx":     int(port_idx),
+                    "port_name":    port.get("name") or port.get("ifname"),
+                    "speed":        port.get("speed"),
+                    "is_up":        bool(port.get("up", False)),
+                    "rx_bytes":     port.get("rx_bytes"),
+                    "tx_bytes":     port.get("tx_bytes"),
+                    "rx_bytes_rate": port.get("rx_bytes-r"),
+                    "tx_bytes_rate": port.get("tx_bytes-r"),
+                    "rx_errors":    port.get("rx_errors"),
+                    "tx_errors":    port.get("tx_errors"),
+                    "rx_dropped":   port.get("rx_dropped"),
+                    "tx_dropped":   port.get("tx_dropped"),
+                    "rx_multicast": port.get("rx_multicast"),
+                    "poe_power_w":  poe_w,
+                })
+
+            if records:
+                self._db.insert_port_stats(records)
+
+        logger.debug("Port stats collected for {} devices", len(devices))
+
+    # ------------------------------------------------------------------
+    # Network statistics — per-VLAN client count and traffic
     # ------------------------------------------------------------------
 
     def _collect_network_statistics(self) -> None:
         """
         Coleta estatísticas de tráfego e clientes para todas as redes configuradas.
+        Usa Integrations API se disponível; cai para /rest/networkconf (legado, sem tráfego).
         """
         networks = self._api.get_networks()
         if not networks:
@@ -857,15 +995,15 @@ class DataCollector:
                 continue
 
             self._db.insert_network_stat({
-                "network_name": network_name,
-                "network_id": network.get("_id") or network.get("id"),
-                "ip_subnet": network.get("ip_subnet") or network.get("networkconf"),
-                "num_clients": network.get("num_clients", 0),
-                "up_bytes": network.get("up_bytes", 0),
-                "down_bytes": network.get("down_bytes", 0),
-                "up_bytes_rate": network.get("up_bytes_rate"),
+                "network_name":   network_name,
+                "network_id":     network.get("_id") or network.get("id"),
+                "ip_subnet":      network.get("ip_subnet") or network.get("networkconf"),
+                "num_clients":    network.get("num_clients", 0),
+                "up_bytes":       network.get("up_bytes", 0),
+                "down_bytes":     network.get("down_bytes", 0),
+                "up_bytes_rate":  network.get("up_bytes_rate"),
                 "down_bytes_rate": network.get("down_bytes_rate"),
-                "timestamp": ts,
+                "timestamp":      ts,
             })
 
         logger.debug("Network statistics snapshot saved for {} networks", len(networks))

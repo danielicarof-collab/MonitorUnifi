@@ -202,30 +202,80 @@ class DeviceStat(Base):
 
     id                      = Column(Integer, primary_key=True, autoincrement=True)
     timestamp               = Column(DateTime, default=datetime.utcnow, index=True)
-    device_mac              = Column(String(17), index=True)  # MAC do dispositivo
-    device_name             = Column(String(255))             # Nome do dispositivo
-    device_model            = Column(String(100))             # Modelo (ex: UAP-AC-Pro)
-    device_ip               = Column(String(45))              # IP do dispositivo
-    cpu_utilization_pct     = Column(Float)                   # CPU em %
-    memory_utilization_pct  = Column(Float)                   # Memória em %
-    load_average_1min       = Column(Float)                   # Carga média 1 min
-    load_average_5min       = Column(Float)                   # Carga média 5 min
-    load_average_15min      = Column(Float)                   # Carga média 15 min
-    uptime_sec              = Column(BigInteger)              # Uptime em segundos
-    last_heartbeat_at       = Column(DateTime)                # Último heartbeat
-    # Métricas por rádio (2.4GHz, 5GHz, 6GHz)
-    tx_retries_pct_24g      = Column(Float)                   # TX retries % em 2.4GHz
-    tx_retries_pct_5g       = Column(Float)                   # TX retries % em 5GHz
-    tx_retries_pct_6g       = Column(Float)                   # TX retries % em 6GHz
-    frequency_24g           = Column(Float)                   # Frequência 2.4GHz
-    frequency_5g            = Column(Float)                   # Frequência 5GHz
-    frequency_6g            = Column(Float)                   # Frequência 6GHz
-    # Tráfego
-    tx_rate_bps             = Column(BigInteger)              # TX rate em bps
-    rx_rate_bps             = Column(BigInteger)              # RX rate em bps
+    device_mac              = Column(String(17), index=True)
+    device_name             = Column(String(255))
+    device_model            = Column(String(100))
+    device_ip               = Column(String(45))
+    cpu_utilization_pct     = Column(Float)
+    memory_utilization_pct  = Column(Float)
+    load_average_1min       = Column(Float)
+    load_average_5min       = Column(Float)
+    load_average_15min      = Column(Float)
+    uptime_sec              = Column(BigInteger)
+    last_heartbeat_at       = Column(DateTime)
+    # Temperatures (from /stat/device → temperatures[])
+    temp_cpu                = Column(Float)   # CPU die temperature °C
+    temp_board              = Column(Float)   # Board/Local temperature °C
+    temp_phy                = Column(Float)   # PHY chip temperature °C
+    # Radio retries (2.4/5/6 GHz)
+    tx_retries_pct_24g      = Column(Float)
+    tx_retries_pct_5g       = Column(Float)
+    tx_retries_pct_6g       = Column(Float)
+    frequency_24g           = Column(Float)
+    frequency_5g            = Column(Float)
+    frequency_6g            = Column(Float)
+    # Throughput
+    tx_rate_bps             = Column(BigInteger)
+    rx_rate_bps             = Column(BigInteger)
 
     __table_args__ = (
         Index("ix_device_mac_ts", "device_mac", "timestamp"),
+    )
+
+
+class PortStat(Base):
+    """Per-port statistics snapshot for switches and gateway (from /stat/device port_table)."""
+    __tablename__ = "port_stats"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    device_mac      = Column(String(17), index=True)
+    port_idx        = Column(Integer)
+    port_name       = Column(String(64))
+    speed           = Column(Integer)           # negotiated speed Mbps
+    is_up           = Column(Boolean)
+    rx_bytes        = Column(BigInteger)
+    tx_bytes        = Column(BigInteger)
+    rx_bytes_rate   = Column(BigInteger)        # bytes/s
+    tx_bytes_rate   = Column(BigInteger)        # bytes/s
+    rx_errors       = Column(BigInteger)
+    tx_errors       = Column(BigInteger)
+    rx_dropped      = Column(BigInteger)
+    tx_dropped      = Column(BigInteger)
+    rx_multicast    = Column(BigInteger)
+    poe_power_w     = Column(Float)             # PoE watts if applicable
+
+    __table_args__ = (
+        Index("ix_port_device_ts", "device_mac", "timestamp"),
+    )
+
+
+class SpeedtestResult(Base):
+    """ISP speedtest results captured from UDM-Pro uplink data."""
+    __tablename__ = "speedtest_results"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True)
+    interface       = Column(String(10))        # WAN, WAN2
+    ping_ms         = Column(Float)
+    download_mbps   = Column(Float)
+    upload_mbps     = Column(Float)
+    isp_name        = Column(String(255))
+    isp_org         = Column(String(255))
+    wan_ip          = Column(String(45))
+
+    __table_args__ = (
+        Index("ix_speedtest_ts", "timestamp"),
     )
 
 

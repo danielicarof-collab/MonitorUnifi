@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from src.models import (
     Base, Client, ClientSnapshot, APStat, RogueAP,
     CollectionState, DPITraffic, FirewallBlock, Threat, VPNStatus, WANStatus,
+    DeviceStat, NetworkStat, PortStat, SpeedtestResult,
 )
 
 
@@ -47,16 +48,18 @@ class DatabaseManager:
         (colunas novas em tabelas já existentes).
         """
         migrations = [
-            # v2 — campos adicionados para suporte ao system-log
+            # v2 — system-log support
             "ALTER TABLE firewall_blocks ADD COLUMN severity  VARCHAR(20)",
             "ALTER TABLE firewall_blocks ADD COLUMN raw_message TEXT",
             "ALTER TABLE firewall_blocks ADD COLUMN source     VARCHAR(20)",
-            # raw_event_id ampliado para UUIDs (128 chars)
-            # SQLite não suporta ALTER COLUMN — ignoramos silenciosamente
             # v3 — device fingerprint fields
             "ALTER TABLE clients ADD COLUMN device_type VARCHAR(50)",
             "ALTER TABLE clients ADD COLUMN os_name VARCHAR(100)",
             "ALTER TABLE clients ADD COLUMN dev_family VARCHAR(100)",
+            # v4 — temperature columns in device_stats
+            "ALTER TABLE device_stats ADD COLUMN temp_cpu FLOAT",
+            "ALTER TABLE device_stats ADD COLUMN temp_board FLOAT",
+            "ALTER TABLE device_stats ADD COLUMN temp_phy FLOAT",
         ]
         with self._engine.connect() as conn:
             for sql in migrations:
@@ -807,8 +810,6 @@ class DatabaseManager:
 
     def insert_device_stat(self, data: Dict[str, Any]) -> bool:
         """Insert a device statistic snapshot."""
-        from src.models import DeviceStat
-        
         device_mac = data.get("device_mac", "").lower()
         if not device_mac:
             return False
@@ -828,6 +829,9 @@ class DatabaseManager:
                     load_average_15min      = data.get("load_average_15min"),
                     uptime_sec              = data.get("uptime_sec"),
                     last_heartbeat_at       = data.get("last_heartbeat_at"),
+                    temp_cpu                = data.get("temp_cpu"),
+                    temp_board              = data.get("temp_board"),
+                    temp_phy                = data.get("temp_phy"),
                     tx_retries_pct_24g      = data.get("tx_retries_pct_24g"),
                     tx_retries_pct_5g       = data.get("tx_retries_pct_5g"),
                     tx_retries_pct_6g       = data.get("tx_retries_pct_6g"),
@@ -846,8 +850,6 @@ class DatabaseManager:
 
     def get_device_stats(self, device_mac: str, hours: int = 24) -> pd.DataFrame:
         """Get historical device statistics."""
-        from src.models import DeviceStat
-        
         since = datetime.utcnow() - timedelta(hours=hours)
         with self._session() as sess:
             rows = (
@@ -859,21 +861,186 @@ class DatabaseManager:
                 .order_by(DeviceStat.timestamp.asc())
                 .all()
             )
-        
+
         if not rows:
             return pd.DataFrame()
-        
+
         return pd.DataFrame([{
-            "timestamp": r.timestamp,
-            "cpu_pct": r.cpu_utilization_pct,
-            "memory_pct": r.memory_utilization_pct,
-            "load_1min": r.load_average_1min,
-            "load_5min": r.load_average_5min,
-            "load_15min": r.load_average_15min,
+            "timestamp":      r.timestamp,
+            "cpu_pct":        r.cpu_utilization_pct,
+            "memory_pct":     r.memory_utilization_pct,
+            "load_1min":      r.load_average_1min,
+            "load_5min":      r.load_average_5min,
+            "load_15min":     r.load_average_15min,
+            "temp_cpu":       r.temp_cpu,
+            "temp_board":     r.temp_board,
+            "temp_phy":       r.temp_phy,
             "tx_retries_24g": r.tx_retries_pct_24g,
-            "tx_retries_5g": r.tx_retries_pct_5g,
-            "tx_retries_6g": r.tx_retries_pct_6g,
+            "tx_retries_5g":  r.tx_retries_pct_5g,
+            "tx_retries_6g":  r.tx_retries_pct_6g,
         } for r in rows])
+
+    def get_latest_device_stat(self) -> pd.DataFrame:
+        """Most recent hardware snapshot for every monitored device."""
+        with self._session() as sess:
+            subq = (
+                sess.query(
+                    DeviceStat.device_mac,
+                    func.max(DeviceStat.timestamp).label("max_ts"),
+                )
+                .group_by(DeviceStat.device_mac)
+                .subquery()
+            )
+            rows = (
+                sess.query(DeviceStat)
+                .join(
+                    subq,
+                    (DeviceStat.device_mac == subq.c.device_mac)
+                    & (DeviceStat.timestamp == subq.c.max_ts),
+                )
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "device_mac":   r.device_mac,
+            "device_name":  r.device_name or r.device_mac,
+            "device_model": r.device_model,
+            "cpu_pct":      r.cpu_utilization_pct,
+            "memory_pct":   r.memory_utilization_pct,
+            "temp_cpu":     r.temp_cpu,
+            "temp_board":   r.temp_board,
+            "temp_phy":     r.temp_phy,
+            "uptime_sec":   r.uptime_sec,
+            "timestamp":    r.timestamp,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # Port Statistics (NEW)
+    # ------------------------------------------------------------------
+
+    def insert_port_stats(self, records: List[Dict[str, Any]]) -> None:
+        with self._session() as sess:
+            ts = datetime.utcnow()
+            for r in records:
+                sess.add(PortStat(
+                    timestamp      = ts,
+                    device_mac     = r["device_mac"].lower(),
+                    port_idx       = r.get("port_idx"),
+                    port_name      = r.get("port_name"),
+                    speed          = r.get("speed"),
+                    is_up          = r.get("is_up"),
+                    rx_bytes       = r.get("rx_bytes"),
+                    tx_bytes       = r.get("tx_bytes"),
+                    rx_bytes_rate  = r.get("rx_bytes_rate"),
+                    tx_bytes_rate  = r.get("tx_bytes_rate"),
+                    rx_errors      = r.get("rx_errors"),
+                    tx_errors      = r.get("tx_errors"),
+                    rx_dropped     = r.get("rx_dropped"),
+                    tx_dropped     = r.get("tx_dropped"),
+                    rx_multicast   = r.get("rx_multicast"),
+                    poe_power_w    = r.get("poe_power_w"),
+                ))
+            sess.commit()
+
+    def get_latest_port_stats(self, device_mac: str) -> pd.DataFrame:
+        """Latest port snapshot for a device, one row per port."""
+        with self._session() as sess:
+            subq = (
+                sess.query(
+                    PortStat.device_mac,
+                    func.max(PortStat.timestamp).label("max_ts"),
+                )
+                .filter(PortStat.device_mac == device_mac.lower())
+                .group_by(PortStat.device_mac)
+                .subquery()
+            )
+            rows = (
+                sess.query(PortStat)
+                .join(
+                    subq,
+                    (PortStat.device_mac == subq.c.device_mac)
+                    & (PortStat.timestamp == subq.c.max_ts),
+                )
+                .order_by(PortStat.port_idx)
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "port_idx":     r.port_idx,
+            "port_name":    r.port_name or f"Port {r.port_idx}",
+            "speed":        r.speed,
+            "is_up":        r.is_up,
+            "rx_bytes":     r.rx_bytes,
+            "tx_bytes":     r.tx_bytes,
+            "rx_bytes_rate": r.rx_bytes_rate,
+            "tx_bytes_rate": r.tx_bytes_rate,
+            "rx_errors":    r.rx_errors,
+            "tx_errors":    r.tx_errors,
+            "rx_dropped":   r.rx_dropped,
+            "tx_dropped":   r.tx_dropped,
+            "poe_power_w":  r.poe_power_w,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # Speedtest Results (NEW)
+    # ------------------------------------------------------------------
+
+    def insert_speedtest_result(self, data: Dict[str, Any]) -> None:
+        with self._session() as sess:
+            sess.add(SpeedtestResult(
+                timestamp     = data.get("timestamp", datetime.utcnow()),
+                interface     = data.get("interface", "WAN"),
+                ping_ms       = data.get("ping_ms"),
+                download_mbps = data.get("download_mbps"),
+                upload_mbps   = data.get("upload_mbps"),
+                isp_name      = data.get("isp_name"),
+                isp_org       = data.get("isp_org"),
+                wan_ip        = data.get("wan_ip"),
+            ))
+            sess.commit()
+
+    def get_speedtest_history(self, days: int = 30) -> pd.DataFrame:
+        since = datetime.utcnow() - timedelta(days=days)
+        with self._session() as sess:
+            rows = (
+                sess.query(SpeedtestResult)
+                .filter(SpeedtestResult.timestamp >= since)
+                .order_by(SpeedtestResult.timestamp.asc())
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "timestamp":     r.timestamp,
+            "interface":     r.interface,
+            "ping_ms":       r.ping_ms,
+            "download_mbps": r.download_mbps,
+            "upload_mbps":   r.upload_mbps,
+            "isp_name":      r.isp_name,
+            "wan_ip":        r.wan_ip,
+        } for r in rows])
+
+    def get_latest_speedtest(self) -> Optional[Dict[str, Any]]:
+        with self._session() as sess:
+            row = (
+                sess.query(SpeedtestResult)
+                .order_by(SpeedtestResult.timestamp.desc())
+                .first()
+            )
+        if not row:
+            return None
+        return {
+            "timestamp":     row.timestamp,
+            "interface":     row.interface,
+            "ping_ms":       row.ping_ms,
+            "download_mbps": row.download_mbps,
+            "upload_mbps":   row.upload_mbps,
+            "isp_name":      row.isp_name,
+            "isp_org":       row.isp_org,
+            "wan_ip":        row.wan_ip,
+        }
 
     # ------------------------------------------------------------------
     # Network Statistics (NEW)
@@ -881,8 +1048,6 @@ class DatabaseManager:
 
     def insert_network_stat(self, data: Dict[str, Any]) -> bool:
         """Insert a network statistic snapshot."""
-        from src.models import NetworkStat
-        
         network_name = data.get("network_name")
         if not network_name:
             return False
@@ -909,8 +1074,6 @@ class DatabaseManager:
 
     def get_network_stats(self, network_name: str, hours: int = 24) -> pd.DataFrame:
         """Get historical network statistics."""
-        from src.models import NetworkStat
-        
         since = datetime.utcnow() - timedelta(hours=hours)
         with self._session() as sess:
             rows = (
