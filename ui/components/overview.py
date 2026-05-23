@@ -52,14 +52,19 @@ def _load_vpn(_db: DatabaseManager) -> pd.DataFrame:
     return _db.get_vpn_status()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _load_system_uptime(_db: DatabaseManager) -> int | None:
     return _db.get_system_uptime()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _load_monthly_bytes(_db: DatabaseManager) -> dict:
     return _db.get_monthly_wan_bytes()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_wan_uptime(_db: DatabaseManager, year: int, month: int) -> dict:
+    return _db.get_wan_uptime_stats(year, month)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -270,7 +275,7 @@ def _render_wan_trend(db: DatabaseManager) -> None:
 
 def _render_uptime_gauge(db: DatabaseManager) -> None:
     now = datetime.utcnow()
-    uptime_data = db.get_wan_uptime_stats(now.year, now.month)
+    uptime_data = _load_wan_uptime(db, now.year, now.month)
 
     st.subheader(f"Uptime WAN — {now.strftime('%B %Y')}")
 
@@ -399,9 +404,10 @@ def _render_system_bar(db: DatabaseManager) -> None:
                 name   = row.get("tunnel_name") or "—"
                 rip    = row.get("remote_ip") or "—"
                 upt    = fmt_uptime(row.get("uptime"))
+                upt_part = f" &nbsp;|&nbsp; Uptime: {upt}" if upt != "—" else ""
                 st.markdown(
                     f"**{name}** &nbsp; {badge}  \n"
-                    f"<small>IP Remoto: {rip} &nbsp;|&nbsp; Uptime: {upt}</small>",
+                    f"<small>IP Remoto: {rip}{upt_part}</small>",
                     unsafe_allow_html=True,
                 )
 

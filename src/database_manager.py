@@ -1147,13 +1147,44 @@ class DatabaseManager:
         } for r in rows])
 
     def get_system_uptime(self) -> Optional[int]:
-        """Returns the most recent device uptime in seconds."""
+        """Returns the gateway (UDM-Pro/USG) uptime in seconds from the most recent snapshot.
+        Falls back to the device with the highest uptime if no gateway model is found."""
         with self._session() as sess:
-            row = (
+            # Latest snapshot per device
+            subq = (
+                sess.query(
+                    DeviceStat.device_mac,
+                    func.max(DeviceStat.timestamp).label("max_ts"),
+                )
+                .group_by(DeviceStat.device_mac)
+                .subquery()
+            )
+            base_q = (
                 sess.query(DeviceStat.uptime_sec)
-                .order_by(DeviceStat.timestamp.desc())
+                .join(
+                    subq,
+                    (DeviceStat.device_mac == subq.c.device_mac)
+                    & (DeviceStat.timestamp == subq.c.max_ts),
+                )
+            )
+            # Prefer gateway models (UDM-Pro, USG, UDR, UNVR…)
+            from sqlalchemy import or_
+            gw_row = (
+                base_q.filter(
+                    or_(
+                        DeviceStat.device_model.like("UDM%"),
+                        DeviceStat.device_model.like("USG%"),
+                        DeviceStat.device_model.like("UDR%"),
+                        DeviceStat.device_model.like("UNVR%"),
+                    )
+                )
+                .order_by(DeviceStat.uptime_sec.desc())
                 .first()
             )
+            if gw_row and gw_row[0] is not None:
+                return gw_row[0]
+            # Fallback: highest uptime among all devices
+            row = base_q.order_by(DeviceStat.uptime_sec.desc()).first()
         return row[0] if row else None
 
     def get_monthly_wan_bytes(self) -> Dict[str, int]:

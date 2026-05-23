@@ -521,8 +521,8 @@ def _render_rogue_aps(rogue_df: pd.DataFrame) -> None:
         lambda s: f"{s} dBm" if s is not None else "—"
     )
     display["Detectado Por"] = display["ap_mac"].fillna("—")
-    display["1ª Detecção"]   = pd.to_datetime(display["first_seen"]).dt.strftime("%d/%m %H:%M")
-    display["Última Vez"]    = pd.to_datetime(display["last_seen"]).dt.strftime("%d/%m %H:%M")
+    display["1ª Detecção"]   = pd.to_datetime(display["first_seen"], errors="coerce").dt.strftime("%d/%m %H:%M").fillna("—")
+    display["Última Vez"]    = pd.to_datetime(display["last_seen"],  errors="coerce").dt.strftime("%d/%m %H:%M").fillna("—")
 
     st.dataframe(
         display[[
