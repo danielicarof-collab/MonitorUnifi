@@ -1309,21 +1309,6 @@ class DataCollector:
                 import time as _time
                 from datetime import datetime as _dt
 
-                # /stat/health vpn="error" no firmware 10.3.58 mesmo com
-                # túneis operacionais — não é confiável para status real.
-                # Logar apenas para referência; não usar na decisão.
-                health_data = self._api.get_health()
-                health_subsystems = {
-                    sub.get("subsystem", "").lower(): sub.get("status", "")
-                    for sub in health_data if sub.get("subsystem")
-                }
-                logger.debug("VPN: health subsystems (informativo): {}", health_subsystems)
-
-                # ── Heurística por timestamp dos eventos syslog ──────────
-                # Syslog guarda apenas eventos não-reconhecidos (status=NEW).
-                # Eventos CONNECTED são auto-reconhecidos e purgados.
-                # Se o DISCONNECTED mais recente for antigo (> 2h), o túnel
-                # reconectou e está online (evento de reconexão foi purgado).
                 def _parse_ts(ev: Dict) -> float:
                     raw = ev.get("time") or ev.get("timestamp")
                     if raw:
@@ -1342,29 +1327,54 @@ class DataCollector:
                             pass
                     return 0.0
 
-                now_ts     = _time.time()
-                timestamps = [_parse_ts(ev) for ev in vpn_events]
-                newest_ts  = max(timestamps) if timestamps else 0.0
-                age_hours  = (now_ts - newest_ts) / 3600 if newest_ts else 999.0
-                vpn_health_ok = age_hours > 2
-                logger.info(
-                    "VPN: evento mais recente tem {:.1f}h → {}",
-                    age_hours,
-                    "online" if vpn_health_ok else "offline",
-                )
+                # Agrupar eventos por túnel para avaliação individual
+                # (cada túnel pode ter horário de desconexão diferente)
+                tunnel_latest_ts: Dict[str, float] = {}
+                for ev in vpn_events:
+                    params  = ev.get("parameters") or {}
+                    network = params.get("NETWORK") or {}
+                    tname   = network.get("name")
+                    if not tname:
+                        continue
+                    ts = _parse_ts(ev)
+                    if ts > tunnel_latest_ts.get(tname, 0.0):
+                        tunnel_latest_ts[tname] = ts
 
-                status_str = "running" if vpn_health_ok else "down"
+                now_ts = _time.time()
+                online_count = 0
                 for tname, meta in tunnel_meta.items():
+                    latest_ts = tunnel_latest_ts.get(tname, 0.0)
+                    age_sec   = (now_ts - latest_ts) if latest_ts else 0.0
+                    age_hours = age_sec / 3600
+
+                    # Heurística: evento de desconexão > 2h → túnel reconectou
+                    # (eventos CONNECTED são auto-reconhecidos e purgados rapidamente)
+                    # Uptime estimado = tempo desde o último evento de desconexão.
+                    # É um lower-bound: o túnel pode ter ficado offline por horas
+                    # após o evento antes de reconectar, então o uptime real pode
+                    # ser menor. Prefixo "~" no UI indica que é estimativa.
+                    vpn_ok = age_hours > 2
+                    uptime_est = int(age_sec) if vpn_ok and age_sec > 0 else None
+
                     records.append({
                         "tunnel_name": tname,
-                        "status":      status_str,
+                        "status":      "running" if vpn_ok else "down",
                         "remote_ip":   meta["remote_ip"],
-                        "uptime":      None,
+                        "uptime":      uptime_est,
                     })
+                    if vpn_ok:
+                        online_count += 1
+                    logger.info(
+                        "VPN: túnel '{}' — último evento {:.1f}h atrás → {} (uptime est. {}s)",
+                        tname,
+                        age_hours,
+                        "online" if vpn_ok else "offline",
+                        uptime_est,
+                    )
+
                 logger.info(
-                    "VPN: {} túneis ({}) via syslog+health",
-                    len(tunnel_meta),
-                    "online" if vpn_health_ok else "offline",
+                    "VPN: {}/{} túneis online via syslog heurística",
+                    online_count, len(tunnel_meta),
                 )
 
         # ── 4. Dados de VPN embarcados no device (gateway) ────────────

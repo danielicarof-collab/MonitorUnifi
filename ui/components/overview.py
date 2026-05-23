@@ -407,7 +407,7 @@ def _render_system_bar(db: DatabaseManager) -> None:
                 name   = row.get("tunnel_name") or "—"
                 rip    = row.get("remote_ip") or "—"
                 upt    = fmt_uptime(row.get("uptime"))
-                upt_part = f" &nbsp;|&nbsp; Uptime: {upt}" if upt != "—" else ""
+                upt_part = f" &nbsp;|&nbsp; Uptime: ≈{upt}" if upt != "—" else ""
                 st.markdown(
                     f"**{name}** &nbsp; {badge}  \n"
                     f"<small>IP Remoto: {rip}{upt_part}</small>",
