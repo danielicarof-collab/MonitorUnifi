@@ -62,6 +62,11 @@ def _load_monthly_bytes(_db: DatabaseManager) -> dict:
     return _db.get_monthly_wan_bytes()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_wan_throughput(_db: DatabaseManager) -> pd.DataFrame:
+    return _db.get_wan_throughput_history(hours=24, interval="hourly")
+
+
 # ------------------------------------------------------------------
 # WAN section
 # ------------------------------------------------------------------
@@ -204,6 +209,56 @@ def _render_top_bandwidth(bw_df: pd.DataFrame) -> None:
         "yaxis":     {"gridcolor": "#1e3a5f", "zerolinecolor": "#1e3a5f"},
         "legend":    {"orientation": "h", "y": 1.08},
         "margin":    {"t": 60, "b": 30, "l": 20, "r": 20},
+    })
+    fig.update_layout(**layout)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ------------------------------------------------------------------
+# WAN throughput 24h trend
+# ------------------------------------------------------------------
+
+def _render_wan_trend(db: DatabaseManager) -> None:
+    st.subheader("Tendência WAN — Últimas 24h (por hora)")
+    df = _load_wan_throughput(db)
+
+    if df.empty:
+        st.info(
+            "Sem dados de throughput WAN histórico ainda.  "
+            "Os dados serão coletados via `/stat/report/hourly.gw` nos próximos ciclos."
+        )
+        return
+
+    df = df.copy()
+    df["rx_mb"] = df["rx_bytes"] / 1_048_576
+    df["tx_mb"] = df["tx_bytes"] / 1_048_576
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df["timestamp"], y=df["rx_mb"],
+        name="Download",
+        mode="lines+markers",
+        line=dict(color="#58a6ff", width=2),
+        fill="tozeroy",
+        fillcolor="rgba(88,166,255,0.08)",
+        hovertemplate="<b>%{x|%H:%M}</b><br>Download: %{y:.1f} MB<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["timestamp"], y=df["tx_mb"],
+        name="Upload",
+        mode="lines+markers",
+        line=dict(color="#3fb950", width=2),
+        hovertemplate="<b>%{x|%H:%M}</b><br>Upload: %{y:.1f} MB<extra></extra>",
+    ))
+
+    layout = plotly_dark_layout()
+    layout.update({
+        "height":  260,
+        "xaxis":   {"title": "Hora", "gridcolor": "#1e3a5f", "zerolinecolor": "#1e3a5f"},
+        "yaxis":   {"title": "MB por hora", "gridcolor": "#1e3a5f", "zerolinecolor": "#1e3a5f"},
+        "legend":  {"orientation": "h", "y": 1.08},
+        "margin":  {"t": 30, "b": 30, "l": 40, "r": 20},
+        "showlegend": True,
     })
     fig.update_layout(**layout)
     st.plotly_chart(fig, use_container_width=True)
@@ -386,5 +441,10 @@ def render(db: DatabaseManager) -> None:
 
     st.divider()
 
-    # ── Row 4: WAN uptime gauge ───────────────────────────────────
+    # ── Row 4: WAN throughput 24h trend ──────────────────────────
+    _render_wan_trend(db)
+
+    st.divider()
+
+    # ── Row 5: WAN uptime gauge ───────────────────────────────────
     _render_uptime_gauge(db)

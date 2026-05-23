@@ -148,8 +148,9 @@ def cmd_diagnose() -> None:
 
     # Endpoints legados
     print("\n  ── Endpoints Legados (v1/v2) ─────────────────────────")
-    legacy_keys = ["health","clients","known_clients","dpi","devices",
-                   "events_v1","alarms_v1","ipsecvpn"]
+    legacy_keys = ["health","clients","known_clients","dpi","sitedpi","devices",
+                   "events_v1","alarms_v1","ipsecvpn","firewallrule","portforward",
+                   "sysinfo","speedtest_result","wan_throughput_hourly"]
     ok_count = fail_count = 0
     for ep in legacy_keys:
         status = report["endpoints"].get(ep, "N/A")

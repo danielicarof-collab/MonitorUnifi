@@ -79,6 +79,7 @@ class DataCollector:
             self._sync_clients()
             self._collect_client_snapshots()
             self._collect_wan_status()
+            self._collect_wan_throughput()
             self._collect_device_statistics()
             self._collect_port_stats()
             self._collect_network_statistics()
@@ -87,6 +88,8 @@ class DataCollector:
             self._collect_dpi()
             self._collect_ap_stats()
             self._collect_rogue_aps()
+            self._collect_firewall_rules()
+            self._collect_port_forwards()
             self._audit.run()
         except Exception as exc:
             logger.exception("Unhandled error in collection cycle: {}", exc)
@@ -1062,6 +1065,89 @@ class DataCollector:
             })
 
         logger.debug("Network statistics snapshot saved for {} networks", len(networks))
+
+    # ------------------------------------------------------------------
+    # WAN Throughput History (/stat/report/hourly.gw)
+    # ------------------------------------------------------------------
+
+    def _collect_wan_throughput(self) -> None:
+        """
+        Coleta histórico de throughput WAN por hora via /stat/report/hourly.gw.
+
+        Busca as últimas 25 horas para garantir que buckets da hora anterior
+        não sejam perdidos, usando deduplicação no DB para evitar duplicatas.
+        """
+        import time as _time
+        end_ms   = int(_time.time() * 1000)
+        start_ms = end_ms - 25 * 3600 * 1000  # last 25 hours
+
+        buckets = self._api.get_gateway_report(
+            interval="hourly", start_ts=start_ms, end_ts=end_ms
+        )
+        if not buckets:
+            logger.debug("WAN throughput: endpoint /stat/report/hourly.gw sem dados")
+            return
+
+        records: List[Dict] = []
+        for b in buckets:
+            # timestamp pode vir como epoch em segundos ("time") ou ms ("datetime")
+            raw_ts = b.get("time") or b.get("timestamp")
+            if raw_ts is None:
+                continue
+            try:
+                ts_sec = int(raw_ts)
+                # Se vier em milissegundos (> 1e10), converter para segundos
+                if ts_sec > 1_000_000_000_000:
+                    ts_sec = ts_sec // 1000
+                ts = datetime.utcfromtimestamp(ts_sec)
+            except (TypeError, ValueError):
+                continue
+            records.append({
+                "timestamp":  ts,
+                "rx_bytes":   int(b.get("wan-rx_bytes") or b.get("rx_bytes") or 0),
+                "tx_bytes":   int(b.get("wan-tx_bytes") or b.get("tx_bytes") or 0),
+                "rx_dropped": int(b.get("wan-rx_dropped") or 0),
+                "tx_dropped": int(b.get("wan-tx_dropped") or 0),
+            })
+
+        if records:
+            inserted = self._db.insert_wan_throughput(records, interval="hourly")
+            logger.info("WAN throughput: {} buckets, {} novos inseridos", len(records), inserted)
+
+    # ------------------------------------------------------------------
+    # Firewall Rules (/rest/firewallrule)
+    # ------------------------------------------------------------------
+
+    def _collect_firewall_rules(self) -> None:
+        """
+        Coleta snapshot das regras de firewall configuradas.
+        Executado a cada ciclo mas com deduplicação no DB (upsert por rule_id).
+        """
+        rules = self._api.get_firewall_rules()
+        if not rules:
+            logger.debug("Firewall rules: nenhuma regra ou endpoint indisponível")
+            return
+        for rule in rules:
+            self._db.upsert_firewall_rule(rule)
+        enabled = sum(1 for r in rules if r.get("enabled", True))
+        logger.info("Firewall rules: {} regras ({} ativas)", len(rules), enabled)
+
+    # ------------------------------------------------------------------
+    # Port Forwards (/list/portforward)
+    # ------------------------------------------------------------------
+
+    def _collect_port_forwards(self) -> None:
+        """
+        Coleta regras de port forwarding configuradas.
+        """
+        rules = self._api.get_port_forwards()
+        if not rules:
+            logger.debug("Port forwards: nenhuma regra ou endpoint indisponível")
+            return
+        for rule in rules:
+            self._db.upsert_port_forward(rule)
+        enabled = sum(1 for r in rules if r.get("enabled", True))
+        logger.info("Port forwards: {} regras ({} ativas)", len(rules), enabled)
 
     # ------------------------------------------------------------------
     # VPN status — remote user sessions + site-to-site tunnels

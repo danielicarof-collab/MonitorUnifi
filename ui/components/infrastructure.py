@@ -23,6 +23,16 @@ def _load_ap_stats(_db: DatabaseManager) -> pd.DataFrame:
     return _db.get_latest_ap_stats()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_firewall_rules(_db: DatabaseManager) -> pd.DataFrame:
+    return _db.get_firewall_rules()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_port_forwards(_db: DatabaseManager) -> pd.DataFrame:
+    return _db.get_port_forwards()
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_rogue_aps(_db: DatabaseManager) -> pd.DataFrame:
     return _db.get_rogue_aps()
@@ -530,6 +540,115 @@ def _render_rogue_aps(rogue_df: pd.DataFrame) -> None:
 
 
 # ------------------------------------------------------------------
+# Firewall Rules section
+# ------------------------------------------------------------------
+
+def _render_firewall_rules(db: DatabaseManager) -> None:
+    st.subheader("Regras de Firewall Configuradas")
+
+    df = _load_firewall_rules(db)
+    if df.empty:
+        st.info("Nenhuma regra de firewall coletada ainda.")
+        return
+
+    total   = len(df)
+    enabled = int(df["enabled"].sum()) if "enabled" in df.columns else total
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            metric_card("Regras Total", str(total), "Firewall configurado", "🛡️", "#58a6ff"),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            metric_card("Regras Ativas", str(enabled), f"{total - enabled} desativadas", "✅", "#3fb950"),
+            unsafe_allow_html=True,
+        )
+
+    # Group by ruleset
+    rulesets = df["ruleset"].dropna().unique().tolist()
+    if not rulesets:
+        rulesets = ["(sem grupo)"]
+
+    tab_labels = sorted(rulesets) if rulesets else ["Todas"]
+    tabs = st.tabs(tab_labels)
+    for tab, ruleset in zip(tabs, tab_labels):
+        with tab:
+            subset = df[df["ruleset"] == ruleset].copy() if ruleset != "(sem grupo)" else df.copy()
+            if subset.empty:
+                st.caption("Nenhuma regra neste grupo.")
+                continue
+
+            subset["Status"]   = subset["enabled"].apply(lambda v: "✅ Ativa" if v else "⏸️ Desativada")
+            subset["Ação"]     = subset["action"].str.upper().fillna("—")
+            subset["Protocolo"]= subset["protocol"].fillna("all")
+            subset["Origem"]   = subset["src_address"].fillna("any")
+            subset["Destino"]  = subset["dst_address"].fillna("any")
+
+            display_cols = ["rule_index", "name", "Status", "Ação", "Protocolo",
+                            "Origem", "src_port", "Destino", "dst_port"]
+            existing = [c for c in display_cols if c in subset.columns]
+            st.dataframe(
+                subset[existing].rename(columns={
+                    "rule_index": "#",
+                    "name":       "Nome",
+                    "src_port":   "Porta Orig.",
+                    "dst_port":   "Porta Dest.",
+                }).fillna("—"),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+# ------------------------------------------------------------------
+# Port Forwards section
+# ------------------------------------------------------------------
+
+def _render_port_forwards(db: DatabaseManager) -> None:
+    st.subheader("Port Forwarding")
+
+    df = _load_port_forwards(db)
+    if df.empty:
+        st.info("Nenhuma regra de port forwarding coletada ainda.")
+        return
+
+    total   = len(df)
+    enabled = int(df["enabled"].sum()) if "enabled" in df.columns else total
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            metric_card("Regras Total", str(total), "Port forwards", "🔀", "#ffa657"),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            metric_card("Ativas", str(enabled), f"{total - enabled} desativadas", "✅", "#3fb950"),
+            unsafe_allow_html=True,
+        )
+
+    display = df.copy()
+    display["Status"]   = display["enabled"].apply(lambda v: "✅" if v else "⏸️")
+    display["Log"]      = display["log"].apply(lambda v: "📝 Sim" if v else "—")
+    display["Protocolo"]= display["proto"].fillna("tcp")
+
+    st.dataframe(
+        display[[
+            "Status", "name", "Protocolo", "src_port",
+            "fwd_ip", "fwd_port", "Log",
+        ]].rename(columns={
+            "name":     "Nome",
+            "src_port": "Porta Externa",
+            "fwd_ip":   "IP Interno",
+            "fwd_port": "Porta Interna",
+        }).fillna("—"),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ------------------------------------------------------------------
 # Main render
 # ------------------------------------------------------------------
 
@@ -581,3 +700,9 @@ def render(db: DatabaseManager) -> None:
 
     st.divider()
     _render_rogue_aps(rogue_df)
+
+    st.divider()
+    _render_firewall_rules(db)
+
+    st.divider()
+    _render_port_forwards(db)

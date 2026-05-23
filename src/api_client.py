@@ -608,6 +608,89 @@ class UniFiAPIClient:
             return result["data"] if isinstance(result["data"], list) else []
         return []
 
+    # ── Endpoints históricos e de configuração ────────────────────────
+
+    def get_gateway_report(
+        self,
+        interval: str = "hourly",
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+    ) -> List[Dict]:
+        """
+        Relatório histórico de throughput do gateway (WAN).
+
+        Endpoint: POST /stat/report/{interval}.gw
+        Intervalos válidos: "5minutes", "hourly", "daily", "monthly"
+
+        Retorna lista de buckets com rx_bytes, tx_bytes por período.
+        """
+        attrs = ["wan-rx_bytes", "wan-tx_bytes", "wan-rx_dropped", "wan-tx_dropped", "time"]
+        body: Dict[str, Any] = {"attrs": attrs}
+        if start_ts is not None:
+            body["start"] = start_ts
+        if end_ts is not None:
+            body["end"] = end_ts
+        result = self._request("POST", f"/stat/report/{interval}.gw", json=body)
+        return result if isinstance(result, list) else []
+
+    def get_speedtest_results(self) -> List[Dict]:
+        """
+        Histórico de speedtests armazenados pelo UDM-Pro.
+
+        Endpoint: GET /stat/speed-test-result
+        """
+        result = self._request("GET", "/stat/speed-test-result")
+        return result if isinstance(result, list) else []
+
+    def get_ips_events(self, limit: int = 200) -> List[Dict]:
+        """
+        Eventos IPS/IDS via endpoint legado.
+
+        Endpoint: GET /stat/ips-event
+        """
+        result = self._request("GET", "/stat/ips-event", params={"_limit": limit})
+        return result if isinstance(result, list) else []
+
+    def get_firewall_rules(self) -> List[Dict]:
+        """
+        Regras de firewall configuradas.
+
+        Endpoint: GET /rest/firewallrule
+        """
+        result = self._request("GET", "/rest/firewallrule")
+        return result if isinstance(result, list) else []
+
+    def get_port_forwards(self) -> List[Dict]:
+        """
+        Regras de port forwarding configuradas.
+
+        Endpoint: GET /list/portforward
+        """
+        result = self._request("GET", "/list/portforward")
+        return result if isinstance(result, list) else []
+
+    def get_site_dpi(self) -> List[Dict]:
+        """
+        DPI agregado do site inteiro.
+
+        Endpoint: GET /stat/sitedpi
+        """
+        result = self._request("GET", "/stat/sitedpi")
+        return result if isinstance(result, list) else []
+
+    def get_sysinfo(self) -> Dict[str, Any]:
+        """
+        Informações do sistema/controller (versão firmware, hostname).
+
+        Endpoint: GET /stat/sysinfo
+        """
+        result = self._request("GET", "/stat/sysinfo")
+        if isinstance(result, list) and result:
+            return result[0]
+        if isinstance(result, dict):
+            return result
+        return {}
+
     def get_system_log(
         self,
         categories: Optional[List[str]] = None,
@@ -754,17 +837,38 @@ class UniFiAPIClient:
 
         # ── Endpoints legados (v1) ───────────────────────────────────────
         legacy_tests: List[Tuple[str, str]] = [
-            ("health",        f"{self._base_v1}/stat/health"),
-            ("clients",       f"{self._base_v1}/stat/sta"),
-            ("known_clients", f"{self._base_v1}/rest/user"),
-            ("dpi",           f"{self._base_v1}/stat/dpi"),
-            ("devices",       f"{self._base_v1}/stat/device"),
-            ("events_v1",     f"{self._base_v1}/stat/event?_limit=5"),
-            ("alarms_v1",     f"{self._base_v1}/stat/alarm"),
-            ("ipsecvpn",      f"{self._base_v1}/stat/ipsecvpn"),
+            ("health",          f"{self._base_v1}/stat/health"),
+            ("clients",         f"{self._base_v1}/stat/sta"),
+            ("known_clients",   f"{self._base_v1}/rest/user"),
+            ("dpi",             f"{self._base_v1}/stat/dpi"),
+            ("sitedpi",         f"{self._base_v1}/stat/sitedpi"),
+            ("devices",         f"{self._base_v1}/stat/device"),
+            ("events_v1",       f"{self._base_v1}/stat/event?_limit=5"),
+            ("alarms_v1",       f"{self._base_v1}/stat/alarm"),
+            ("ipsecvpn",        f"{self._base_v1}/stat/ipsecvpn"),
+            ("firewallrule",    f"{self._base_v1}/rest/firewallrule"),
+            ("portforward",     f"{self._base_v1}/list/portforward"),
+            ("sysinfo",         f"{self._base_v1}/stat/sysinfo"),
+            ("speedtest_result",f"{self._base_v1}/stat/speed-test-result"),
         ]
         for label, url in legacy_tests:
             report["endpoints"][label] = _classify_get(self._get_raw(url))
+
+        # ── WAN throughput history (POST endpoint) ─────────────────────
+        import time as _time
+        end_ms   = int(_time.time() * 1000)
+        start_ms = end_ms - 3 * 3600 * 1000  # last 3 hours
+        wt_result = self._request(
+            "POST", "/stat/report/hourly.gw",
+            json={"attrs": ["wan-rx_bytes", "wan-tx_bytes", "time"],
+                  "start": start_ms, "end": end_ms},
+        )
+        if wt_result is None:
+            report["endpoints"]["wan_throughput_hourly"] = "404 NOT FOUND"
+        elif isinstance(wt_result, list):
+            report["endpoints"]["wan_throughput_hourly"] = f"OK ({len(wt_result)} buckets)"
+        else:
+            report["endpoints"]["wan_throughput_hourly"] = "FORMATO INESPERADO"
 
         # ── Integrations API v1 (API Key) ────────────────────────────────
         integrations_tests: List[Tuple[str, str]] = [

@@ -19,6 +19,7 @@ from src.models import (
     Base, Client, ClientSnapshot, APStat, RogueAP,
     CollectionState, DPITraffic, FirewallBlock, Threat, VPNStatus, WANStatus,
     DeviceStat, NetworkStat, PortStat, SpeedtestResult,
+    WANThroughput, FirewallRule, PortForward,
 )
 
 
@@ -60,6 +61,7 @@ class DatabaseManager:
             "ALTER TABLE device_stats ADD COLUMN temp_cpu FLOAT",
             "ALTER TABLE device_stats ADD COLUMN temp_board FLOAT",
             "ALTER TABLE device_stats ADD COLUMN temp_phy FLOAT",
+            # v5 — wan throughput, firewall rules, port forwards (tables created by create_all)
         ]
         with self._engine.connect() as conn:
             for sql in migrations:
@@ -1186,3 +1188,156 @@ class DatabaseManager:
             total_rx += int((rx or 0) * dt)
             total_tx += int((tx or 0) * dt)
         return {"rx_bytes": total_rx, "tx_bytes": total_tx}
+
+    # ------------------------------------------------------------------
+    # WAN Throughput History
+    # ------------------------------------------------------------------
+
+    def insert_wan_throughput(
+        self, records: List[Dict[str, Any]], interval: str = "hourly"
+    ) -> int:
+        """Insert historical WAN throughput buckets; skip duplicates by timestamp+interval."""
+        inserted = 0
+        with self._session() as sess:
+            for r in records:
+                ts = r.get("timestamp")
+                if ts is None:
+                    continue
+                exists = (
+                    sess.query(WANThroughput)
+                    .filter_by(timestamp=ts, interval=interval)
+                    .first()
+                )
+                if exists:
+                    continue
+                sess.add(WANThroughput(
+                    timestamp  = ts,
+                    interval   = interval,
+                    rx_bytes   = r.get("rx_bytes", 0),
+                    tx_bytes   = r.get("tx_bytes", 0),
+                    rx_dropped = r.get("rx_dropped", 0),
+                    tx_dropped = r.get("tx_dropped", 0),
+                ))
+                inserted += 1
+            sess.commit()
+        return inserted
+
+    def get_wan_throughput_history(
+        self, hours: int = 24, interval: str = "hourly"
+    ) -> pd.DataFrame:
+        since = datetime.utcnow() - timedelta(hours=hours)
+        with self._session() as sess:
+            rows = (
+                sess.query(WANThroughput)
+                .filter(
+                    WANThroughput.interval  == interval,
+                    WANThroughput.timestamp >= since,
+                )
+                .order_by(WANThroughput.timestamp.asc())
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "timestamp": r.timestamp,
+            "rx_bytes":  r.rx_bytes,
+            "tx_bytes":  r.tx_bytes,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # Firewall Rules
+    # ------------------------------------------------------------------
+
+    def upsert_firewall_rule(self, data: Dict[str, Any]) -> None:
+        rule_id = data.get("_id") or data.get("id")
+        if not rule_id:
+            return
+        with self._session() as sess:
+            rule = sess.query(FirewallRule).filter_by(rule_id=rule_id).first()
+            if rule is None:
+                rule = FirewallRule(rule_id=rule_id)
+                sess.add(rule)
+            rule.last_seen   = datetime.utcnow()
+            rule.name        = data.get("name")
+            rule.enabled     = bool(data.get("enabled", True))
+            rule.action      = data.get("action")
+            rule.protocol    = data.get("protocol") or data.get("proto_group", "all")
+            rule.src_address = data.get("src_address") or data.get("src_address_group")
+            rule.src_port    = data.get("src_port")
+            rule.dst_address = data.get("dst_address") or data.get("dst_address_group")
+            rule.dst_port    = data.get("dst_port")
+            rule.rule_index  = data.get("rule_index")
+            rule.ruleset     = data.get("ruleset")
+            rule.description = data.get("description")
+            sess.commit()
+
+    def get_firewall_rules(self) -> pd.DataFrame:
+        with self._session() as sess:
+            rows = (
+                sess.query(FirewallRule)
+                .order_by(FirewallRule.ruleset, FirewallRule.rule_index)
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "rule_id":     r.rule_id,
+            "name":        r.name,
+            "enabled":     r.enabled,
+            "action":      r.action,
+            "protocol":    r.protocol,
+            "ruleset":     r.ruleset,
+            "src_address": r.src_address,
+            "src_port":    r.src_port,
+            "dst_address": r.dst_address,
+            "dst_port":    r.dst_port,
+            "rule_index":  r.rule_index,
+            "description": r.description,
+            "last_seen":   r.last_seen,
+        } for r in rows])
+
+    # ------------------------------------------------------------------
+    # Port Forwards
+    # ------------------------------------------------------------------
+
+    def upsert_port_forward(self, data: Dict[str, Any]) -> None:
+        rule_id = data.get("_id") or data.get("id")
+        if not rule_id:
+            return
+        with self._session() as sess:
+            rule = sess.query(PortForward).filter_by(rule_id=rule_id).first()
+            if rule is None:
+                rule = PortForward(rule_id=rule_id)
+                sess.add(rule)
+            rule.last_seen = datetime.utcnow()
+            rule.name      = data.get("name")
+            rule.enabled   = bool(data.get("enabled", True))
+            rule.proto     = data.get("proto")
+            rule.src_port  = str(data.get("src_port") or "any")
+            rule.dst_ip    = data.get("dst_ip")
+            rule.dst_port  = str(data.get("dst_port") or "")
+            rule.fwd_ip    = data.get("fwd_ip") or data.get("fwd")
+            rule.fwd_port  = str(data.get("fwd_port") or "")
+            rule.log       = bool(data.get("log", False))
+            sess.commit()
+
+    def get_port_forwards(self) -> pd.DataFrame:
+        with self._session() as sess:
+            rows = (
+                sess.query(PortForward)
+                .order_by(PortForward.name)
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "name":     r.name,
+            "enabled":  r.enabled,
+            "proto":    r.proto,
+            "src_port": r.src_port,
+            "fwd_ip":   r.fwd_ip,
+            "fwd_port": r.fwd_port,
+            "dst_ip":   r.dst_ip,
+            "dst_port": r.dst_port,
+            "log":      r.log,
+        } for r in rows])

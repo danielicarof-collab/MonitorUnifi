@@ -313,3 +313,58 @@ class RogueAP(Base):
     security   = Column(String(100))
     is_rogue   = Column(Boolean, default=True)
     ap_mac     = Column(String(17))   # MAC do AP que detectou
+
+
+class WANThroughput(Base):
+    """Historical WAN throughput from /stat/report/{interval}.gw — hourly buckets."""
+    __tablename__ = "wan_throughput"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp  = Column(DateTime, nullable=False, index=True)  # bucket time
+    interval   = Column(String(20), default="hourly")           # hourly | 5minutes | daily
+    rx_bytes   = Column(BigInteger, default=0)
+    tx_bytes   = Column(BigInteger, default=0)
+    rx_dropped = Column(BigInteger, default=0)
+    tx_dropped = Column(BigInteger, default=0)
+
+    __table_args__ = (
+        Index("ix_wt_ts_interval", "timestamp", "interval"),
+    )
+
+
+class FirewallRule(Base):
+    """Snapshot of configured firewall rules from /rest/firewallrule."""
+    __tablename__ = "firewall_rules"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    last_seen   = Column(DateTime, default=datetime.utcnow, index=True)
+    rule_id     = Column(String(128), unique=True, index=True)
+    name        = Column(String(255))
+    enabled     = Column(Boolean, default=True)
+    action      = Column(String(20))    # accept, drop, reject
+    protocol    = Column(String(20))    # tcp, udp, all
+    src_address = Column(String(255))
+    src_port    = Column(String(255))
+    dst_address = Column(String(255))
+    dst_port    = Column(String(255))
+    rule_index  = Column(Integer)
+    ruleset     = Column(String(50))    # WAN_IN, WAN_LOCAL, LAN_IN, ...
+    description = Column(Text)
+
+
+class PortForward(Base):
+    """Port forwarding rules from /list/portforward."""
+    __tablename__ = "port_forwards"
+
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    last_seen = Column(DateTime, default=datetime.utcnow, index=True)
+    rule_id   = Column(String(128), unique=True, index=True)
+    name      = Column(String(255))
+    enabled   = Column(Boolean, default=True)
+    proto     = Column(String(20))    # tcp, udp, tcp_udp
+    src_port  = Column(String(50))
+    dst_ip    = Column(String(45))
+    dst_port  = Column(String(50))
+    fwd_ip    = Column(String(45))
+    fwd_port  = Column(String(50))
+    log       = Column(Boolean, default=False)

@@ -410,3 +410,67 @@ def render(db: DatabaseManager) -> None:
                 file_name=f"infratores_{now.strftime('%Y%m%d')}.csv",
                 mime="text/csv",
             )
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # Speedtest history
+    # ------------------------------------------------------------------
+    st.subheader("Histórico de Speedtest ISP")
+    speedtest_df = db.get_speedtest_history(days=90)
+    if speedtest_df.empty:
+        st.info("Nenhum resultado de speedtest disponível ainda.")
+    else:
+        col_dl, col_ul, col_ping = st.columns(3)
+        latest = speedtest_df.iloc[-1]
+        col_dl.metric("Download", f"{latest['download_mbps']:.1f} Mbps" if pd.notna(latest['download_mbps']) else "—")
+        col_ul.metric("Upload",   f"{latest['upload_mbps']:.1f} Mbps"   if pd.notna(latest['upload_mbps'])   else "—")
+        col_ping.metric("Ping",   f"{latest['ping_ms']:.0f} ms"          if pd.notna(latest['ping_ms'])       else "—")
+
+        if st.button("Exportar Speedtest (CSV)"):
+            st.download_button(
+                "📥 Baixar speedtest.csv",
+                data=speedtest_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"speedtest_{now.strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # WAN Throughput history
+    # ------------------------------------------------------------------
+    st.subheader("Histórico de Throughput WAN")
+    wan_df = db.get_wan_throughput_history(hours=168, interval="hourly")  # last 7 days
+    if wan_df.empty:
+        st.info("Dados de throughput WAN ainda sendo coletados (requer alguns ciclos de coleta).")
+    else:
+        import plotly.graph_objects as go
+        wan_df = wan_df.copy()
+        wan_df["rx_gb"] = wan_df["rx_bytes"] / 1_073_741_824
+        wan_df["tx_gb"] = wan_df["tx_bytes"] / 1_073_741_824
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=wan_df["timestamp"], y=wan_df["rx_gb"],
+            name="Download (GB)", marker_color="#58a6ff", opacity=0.85,
+        ))
+        fig.add_trace(go.Bar(
+            x=wan_df["timestamp"], y=wan_df["tx_gb"],
+            name="Upload (GB)", marker_color="#3fb950", opacity=0.85,
+        ))
+        fig.update_layout(
+            barmode="group", height=300,
+            xaxis_title="Hora", yaxis_title="GB",
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=30, b=30),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        if st.button("Exportar Throughput WAN (CSV)"):
+            st.download_button(
+                "📥 Baixar wan_throughput.csv",
+                data=wan_df[["timestamp","rx_bytes","tx_bytes"]].to_csv(index=False).encode("utf-8"),
+                file_name=f"wan_throughput_{now.strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
