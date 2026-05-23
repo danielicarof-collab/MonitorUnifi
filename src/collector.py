@@ -158,14 +158,17 @@ class DataCollector:
         devices     = self._api.get_devices()
         ts = datetime.utcnow()
 
-        # Build supplemental latency + IP map from /stat/device wan1/wan2 fields
+        # Build supplemental data from /stat/device wan1/wan2 fields
         device_wan: Dict[str, Dict] = {}
         for dev in devices:
             for iface_key, label in (("wan1", "WAN"), ("wan2", "WAN2")):
                 wan_data = dev.get(iface_key)
-                if isinstance(wan_data, dict):
+                if isinstance(wan_data, dict) and wan_data:
                     device_wan[label] = wan_data
 
+        saved_ifaces: set = set()
+
+        # Primary source: health API subsystems
         for subsystem in health_data:
             sub = subsystem.get("subsystem", "").lower()
             if sub not in ("wan", "wan2"):
@@ -173,10 +176,7 @@ class DataCollector:
 
             label   = "WAN2" if sub == "wan2" else "WAN"
             dev_wan = device_wan.get(label, {})
-
-            # Latency: prefer health API value, fall back to device wan data
             latency = subsystem.get("latency") or dev_wan.get("latency")
-            # WAN IP: prefer health API, fall back to device
             wan_ip  = subsystem.get("wan_ip") or dev_wan.get("ip")
 
             self._db.insert_wan_status({
@@ -189,7 +189,33 @@ class DataCollector:
                 "wan_ip":    wan_ip,
                 "timestamp": ts,
             })
-        logger.debug("WAN status snapshot saved")
+            saved_ifaces.add(label)
+
+        # Fallback: device wan1/wan2 data for any WAN the health API missed
+        for label, dev_wan in device_wan.items():
+            if label in saved_ifaces:
+                continue
+            wan_ip = dev_wan.get("ip") or dev_wan.get("wan_ip")
+            latency = dev_wan.get("latency")
+            avail   = dev_wan.get("availability", 0)
+            # Only create a record if this interface has meaningful data
+            if not wan_ip and latency is None:
+                continue
+            status = "ok" if (avail and float(avail) > 0) else "unknown"
+            self._db.insert_wan_status({
+                "interface": label,
+                "status":    status,
+                "uptime":    None,
+                "latency":   latency,
+                "rx_bytes":  None,
+                "tx_bytes":  None,
+                "wan_ip":    wan_ip,
+                "timestamp": ts,
+            })
+            saved_ifaces.add(label)
+            logger.debug("WAN {} coletado via device data (health API não retornou)", label)
+
+        logger.debug("WAN status snapshot salvo: {}", saved_ifaces)
 
     # ------------------------------------------------------------------
     # Step 3: Security events — system-log v2 com fallback para v1
