@@ -1245,15 +1245,43 @@ class DataCollector:
                     }
 
             if tunnel_meta:
-                # Verificar status atual via /stat/health (subsistema VPN)
-                # → status "ok" = pelo menos um túnel operacional
+                import time as _time
+
+                # ── A. /stat/health ──────────────────────────────────────
                 health_data = self._api.get_health()
-                vpn_health_ok = False
-                for sub in health_data:
-                    if sub.get("subsystem", "").lower() == "vpn":
-                        vpn_health_ok = str(sub.get("status", "")).lower() == "ok"
-                        logger.debug("VPN: health subsystem vpn status={}", sub.get("status"))
+                health_subsystems = {
+                    sub.get("subsystem", "").lower(): sub.get("status", "")
+                    for sub in health_data if sub.get("subsystem")
+                }
+                logger.debug("VPN: health subsystems disponíveis: {}", health_subsystems)
+
+                vpn_health_ok: Optional[bool] = None
+                for key in ("vpn", "ipsec", "wan"):
+                    if key in health_subsystems:
+                        vpn_health_ok = health_subsystems[key].lower() == "ok"
+                        logger.debug("VPN: health[{}]={}", key, health_subsystems[key])
                         break
+
+                # ── B. Heurística por timestamp ──────────────────────────
+                # O syslog só guarda eventos não-reconhecidos. Eventos de
+                # reconexão são auto-reconhecidos e purgados. Se o evento
+                # DISCONNECTED mais recente for antigo (> 2h), é seguro
+                # assumir que o túnel reconectou e está online.
+                if vpn_health_ok is None:
+                    now_ts = _time.time()
+                    newest_ts = max(
+                        (ev.get("datetime") or ev.get("timestamp") or 0
+                         for ev in vpn_events),
+                        default=0,
+                    )
+                    age_hours = (now_ts - float(newest_ts)) / 3600 if newest_ts else 999
+                    vpn_health_ok = age_hours > 2
+                    logger.info(
+                        "VPN: health subsystem VPN não encontrado; "
+                        "evento mais recente tem {:.1f}h → assumindo {}",
+                        age_hours,
+                        "online" if vpn_health_ok else "offline",
+                    )
 
                 status_str = "running" if vpn_health_ok else "down"
                 for tname, meta in tunnel_meta.items():
