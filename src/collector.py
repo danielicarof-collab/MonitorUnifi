@@ -1336,9 +1336,9 @@ class DataCollector:
                     tname   = network.get("name")
                     if not tname:
                         continue
-                    ts = _parse_ts(ev)
-                    if ts > tunnel_latest_ts.get(tname, 0.0):
-                        tunnel_latest_ts[tname] = ts
+                    ev_ts = _parse_ts(ev)
+                    if ev_ts > tunnel_latest_ts.get(tname, 0.0):
+                        tunnel_latest_ts[tname] = ev_ts
 
                 now_ts = _time.time()
                 online_count = 0
