@@ -555,30 +555,30 @@ class UniFiAPIClient:
 
     def get_site_to_site_vpn(self) -> List[Dict]:
         """
-        Túneis VPN site-to-site (IPSec, WireGuard) via Integrations API v1.
+        Túneis VPN site-to-site (IPSec) via endpoint legado /stat/ipsecvpn.
 
-        Endpoint oficial (documentado em Network API 10.3.58 → Supporting Resources):
-          GET /v1/sites/{siteId}/vpn/site-to-site-tunnels
-
-        Fallback legado: /stat/ipsecvpn (não documentado oficialmente, pode existir).
-        Retorna lista vazia (nunca None) se ambos falharem.
+        A Integrations API (/vpn/site-to-site-tunnels) requer permissão de
+        API Key que frequentemente não está disponível (retorna 401). Por isso
+        vamos direto ao endpoint legado v1, que funciona via cookie auth.
         """
-        # Tentativa 1: Integrations API (endpoint oficial)
-        result = self._request_integrations("/vpn/site-to-site-tunnels")
-        if isinstance(result, list):
-            logger.debug("VPN site-to-site: {} túneis via integrations API", len(result))
-            return result
-        # Tentativa 2: Paginação explícita — integrations pode retornar dict com data
-        if isinstance(result, dict) and "data" in result:
-            return result["data"] if isinstance(result["data"], list) else []
-
-        # Fallback: endpoint legado (não documentado, mas pode existir)
         result = self._request("GET", "/stat/ipsecvpn")
-        if isinstance(result, list):
+        if isinstance(result, list) and result:
             logger.debug("VPN site-to-site: {} túneis via /stat/ipsecvpn", len(result))
             return result
-
         return []
+
+    def get_vpn_syslog_events(self, page_size: int = 100) -> List[Dict]:
+        """
+        Busca eventos VPN do system-log (category=VPN).
+
+        Útil para derivar o status atual dos túneis quando /stat/ipsecvpn
+        não retorna dados. O system-log VPN registra eventos de conexão e
+        desconexão de túneis IPSec/WireGuard.
+        """
+        events, _ = self.get_system_log(
+            categories=["VPN"], page_size=page_size, page_num=1
+        )
+        return events if isinstance(events, list) else []
 
     def get_vpn_servers(self) -> List[Dict]:
         """
@@ -761,6 +761,7 @@ class UniFiAPIClient:
             ("devices",       f"{self._base_v1}/stat/device"),
             ("events_v1",     f"{self._base_v1}/stat/event?_limit=5"),
             ("alarms_v1",     f"{self._base_v1}/stat/alarm"),
+            ("ipsecvpn",      f"{self._base_v1}/stat/ipsecvpn"),
         ]
         for label, url in legacy_tests:
             report["endpoints"][label] = _classify_get(self._get_raw(url))
