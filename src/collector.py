@@ -1069,14 +1069,18 @@ class DataCollector:
 
     def _collect_vpn_status(self) -> None:
         """
-        Coleta status de VPN:
-          - Sessões de usuário remoto (/stat/remoteuservpn)
-          - Configuração de túneis site-to-site (/rest/vpnconn)
+        Coleta status de VPN de todas as fontes disponíveis, em ordem de prioridade:
+          1. /stat/remoteuservpn  — sessões de usuário remoto (OpenVPN/L2TP)
+          2. /stat/ipsecvpn       — túneis IPSec site-to-site
+          3. /stat/health         — subsistema VPN (contagem agregada, sem detalhes)
+          4. /stat/device         — campos VPN embarcados no gateway (fallback final)
+
+        O endpoint /rest/vpnconn retorna 400 em ambientes IPSec — não é usado.
         """
         ts = datetime.utcnow()
         records: List[Dict] = []
 
-        # ── Sessões de usuário remoto ─────────────────────────────────
+        # ── 1. Sessões de usuário remoto ──────────────────────────────
         sessions = self._api.get_vpn_clients()
         for s in sessions:
             name = (
@@ -1089,22 +1093,83 @@ class DataCollector:
                 "remote_ip":   s.get("real_ip") or s.get("remote_ip"),
                 "uptime":      s.get("uptime") or s.get("connected_at"),
             })
+        if sessions:
+            logger.debug("VPN: {} sessões de usuário remoto", len(sessions))
 
-        # ── Túneis site-to-site ───────────────────────────────────────
-        tunnels = self._api._request("GET", "/rest/vpnconn") or []
-        if isinstance(tunnels, list):
-            for t in tunnels:
-                tname = t.get("name") or t.get("_id") or "VPN Tunnel"
-                status = "running" if t.get("running") or t.get("enabled") else "down"
-                records.append({
-                    "tunnel_name": tname,
-                    "status":      status,
-                    "remote_ip":   t.get("remote_gateway") or t.get("peer_ip"),
-                    "uptime":      None,
-                })
+        # ── 2. Túneis IPSec site-to-site ──────────────────────────────
+        ipsec_list = self._api.get_ipsec_vpn()
+        for t in ipsec_list:
+            running = bool(
+                t.get("running") or t.get("is_up") or t.get("established")
+            )
+            uptime_val = t.get("uptime")
+            try:
+                uptime_sec: Optional[int] = int(uptime_val) if uptime_val is not None else None
+            except (TypeError, ValueError):
+                uptime_sec = None
+            records.append({
+                "tunnel_name": (
+                    t.get("name") or t.get("_id") or t.get("remote_gateway") or "IPSec"
+                ),
+                "status":    "running" if running else "down",
+                "remote_ip": t.get("remote_gateway") or t.get("peer_ip") or t.get("remote_host"),
+                "uptime":    uptime_sec,
+            })
+        if ipsec_list:
+            logger.info("VPN: {} túneis IPSec via /stat/ipsecvpn", len(ipsec_list))
+
+        # ── 3. Health API — subsistema VPN (só para log, não gera records) ──
+        if not ipsec_list:
+            health = self._api.get_health()
+            for sub in health:
+                if sub.get("subsystem", "").lower() == "vpn":
+                    logger.debug("VPN: health subsistema VPN: {}", sub)
+                    break
+
+        # ── 4. Dados de VPN embarcados no device (gateway) ────────────
+        # Em algumas versões de firmware, o gateway expõe tabelas de VPN
+        # diretamente em /stat/device sob chaves como vpn_link_table.
+        if not ipsec_list:
+            devices = self._api.get_devices()
+            for dev in devices:
+                for vpn_key in (
+                    "vpn_link_table", "ipsec_link_table",
+                    "vpn_table",       "ipsec_table",
+                    "vpn_peer_table",  "ipsec_peer_table",
+                ):
+                    vpn_data = dev.get(vpn_key)
+                    if not isinstance(vpn_data, list) or not vpn_data:
+                        continue
+                    logger.info(
+                        "VPN: device '{}' → campo '{}' com {} entradas",
+                        dev.get("name") or dev.get("mac"), vpn_key, len(vpn_data),
+                    )
+                    for t in vpn_data:
+                        running = bool(
+                            t.get("running") or t.get("established")
+                            or t.get("connected") or t.get("is_up")
+                        )
+                        uptime_val2 = t.get("uptime")
+                        try:
+                            uptime_sec2: Optional[int] = (
+                                int(uptime_val2) if uptime_val2 is not None else None
+                            )
+                        except (TypeError, ValueError):
+                            uptime_sec2 = None
+                        records.append({
+                            "tunnel_name": (
+                                t.get("name") or t.get("peer_name")
+                                or t.get("remote_gateway") or "VPN Tunnel"
+                            ),
+                            "status":    "running" if running else "down",
+                            "remote_ip": t.get("remote_gateway") or t.get("peer_ip"),
+                            "uptime":    uptime_sec2,
+                        })
+                    break  # encontrou — para de procurar neste device
 
         if records:
+            running_count = sum(1 for r in records if r["status"] == "running")
             self._db.insert_vpn_statuses(records, ts)
-            logger.info("VPN status: {} sessões/túneis ativos", len(records))
+            logger.info("VPN: {}/{} túneis/sessões online", running_count, len(records))
         else:
-            logger.debug("Nenhuma sessão VPN ativa")
+            logger.debug("VPN: nenhuma sessão ou túnel encontrado")

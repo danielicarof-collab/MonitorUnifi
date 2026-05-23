@@ -319,34 +319,36 @@ def _render_system_bar(db: DatabaseManager) -> None:
     # VPN
     with cols[3]:
         if vpn_df.empty:
-            vpn_val   = "Sem dados"
-            vpn_sub   = "Nenhuma sessão ativa"
+            vpn_val   = "—"
+            vpn_sub   = "Sem dados de VPN"
             vpn_color = "#484f58"
         else:
-            running = vpn_df[vpn_df["status"] == "running"]
-            vpn_val   = str(len(running))
-            vpn_sub   = f"de {len(vpn_df)} túneis/sessões"
-            vpn_color = "#3fb950" if len(running) > 0 else "#ff7b72"
+            n_running = int((vpn_df["status"] == "running").sum())
+            n_total   = len(vpn_df)
+            vpn_val   = f"{n_running}/{n_total}"
+            vpn_sub   = "túneis online" if n_total != 1 else "túnel online"
+            vpn_color = "#3fb950" if n_running == n_total else (
+                "#ffa657" if n_running > 0 else "#ff7b72"
+            )
         st.markdown(
-            metric_card("VPN Ativas", vpn_val, vpn_sub, "🔒", vpn_color),
+            metric_card("VPN", vpn_val, vpn_sub, "🔒", vpn_color),
             unsafe_allow_html=True,
         )
 
-    # VPN detail table if there's data
+    # VPN — detalhe inline (sem expander, lista compacta por túnel)
     if not vpn_df.empty:
-        with st.expander("Detalhes VPN", expanded=False):
-            display = vpn_df.copy()
-            display["Status"] = display["status"].apply(
-                lambda s: "🟢 Ativo" if s == "running" else "🔴 Inativo"
-            )
-            display["Uptime"] = display["uptime"].apply(fmt_uptime)
-            st.dataframe(
-                display[["tunnel_name", "Status", "remote_ip", "Uptime"]].rename(
-                    columns={"tunnel_name": "Túnel/Usuário", "remote_ip": "IP Remoto"}
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
+        with st.expander("Detalhes VPN", expanded=True):
+            for _, row in vpn_df.iterrows():
+                is_up  = str(row.get("status", "")).lower() == "running"
+                badge  = "🟢 Online" if is_up else "🔴 Offline"
+                name   = row.get("tunnel_name") or "—"
+                rip    = row.get("remote_ip") or "—"
+                upt    = fmt_uptime(row.get("uptime"))
+                st.markdown(
+                    f"**{name}** &nbsp; {badge}  \n"
+                    f"<small>IP Remoto: {rip} &nbsp;|&nbsp; Uptime: {upt}</small>",
+                    unsafe_allow_html=True,
+                )
 
 
 def render(db: DatabaseManager) -> None:

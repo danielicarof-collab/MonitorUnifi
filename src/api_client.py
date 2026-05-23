@@ -553,6 +553,17 @@ class UniFiAPIClient:
         result = self._request("GET", "/stat/remoteuservpn")
         return result if isinstance(result, list) else []
 
+    def get_ipsec_vpn(self) -> List[Dict]:
+        """
+        IPSec site-to-site VPN tunnel status.
+        Endpoint /stat/ipsecvpn é o caminho canônico no firmware legado.
+        Retorna lista vazia (nunca None) se o endpoint não existir.
+        """
+        result = self._request("GET", "/stat/ipsecvpn")
+        if isinstance(result, list):
+            return result
+        return []
+
     def get_system_log(
         self,
         categories: Optional[List[str]] = None,
