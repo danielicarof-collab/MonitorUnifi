@@ -1189,36 +1189,45 @@ class DatabaseManager:
 
     def get_monthly_wan_bytes(self) -> Dict[str, int]:
         """
-        Approximate monthly WAN data usage by summing WANStatus rx/tx bytes
-        over the current calendar month. Since we store rate (B/s) × poll_interval,
-        accumulate using the time delta between consecutive samples.
+        Uso mensal de dados WAN usando buckets horários de /stat/report/hourly.gw.
+        Cada bucket contém os bytes reais transferidos naquela hora (não uma taxa),
+        portanto a soma é precisa. Fallback para o bucket mensal se horário vazio.
         Returns {"rx_bytes": N, "tx_bytes": N}.
         """
         now   = datetime.utcnow()
         start = datetime(now.year, now.month, 1)
         with self._session() as sess:
-            rows = (
-                sess.query(WANStatus.timestamp, WANStatus.rx_bytes, WANStatus.tx_bytes)
-                .filter(
-                    WANStatus.timestamp >= start,
-                    WANStatus.interface == "WAN",
+            # Preferir soma dos buckets horários do mês (mais granular e preciso)
+            row = (
+                sess.query(
+                    func.sum(WANThroughput.rx_bytes),
+                    func.sum(WANThroughput.tx_bytes),
                 )
-                .order_by(WANStatus.timestamp.asc())
-                .all()
+                .filter(
+                    WANThroughput.interval == "hourly",
+                    WANThroughput.timestamp >= start,
+                )
+                .first()
             )
-        if len(rows) < 2:
-            return {"rx_bytes": 0, "tx_bytes": 0}
+            if row and row[0]:
+                return {"rx_bytes": int(row[0]), "tx_bytes": int(row[1] or 0)}
 
-        total_rx = total_tx = 0
-        for i in range(1, len(rows)):
-            prev_ts, _, _ = rows[i - 1]
-            curr_ts, rx, tx = rows[i]
-            dt = (curr_ts - prev_ts).total_seconds()
-            if dt <= 0 or dt > 600:  # skip gaps > 10 min
-                continue
-            total_rx += int((rx or 0) * dt)
-            total_tx += int((tx or 0) * dt)
-        return {"rx_bytes": total_rx, "tx_bytes": total_tx}
+            # Fallback: bucket mensal único
+            row_m = (
+                sess.query(
+                    func.sum(WANThroughput.rx_bytes),
+                    func.sum(WANThroughput.tx_bytes),
+                )
+                .filter(
+                    WANThroughput.interval == "monthly",
+                    WANThroughput.timestamp >= start,
+                )
+                .first()
+            )
+            if row_m and row_m[0]:
+                return {"rx_bytes": int(row_m[0]), "tx_bytes": int(row_m[1] or 0)}
+
+        return {"rx_bytes": 0, "tx_bytes": 0}
 
     # ------------------------------------------------------------------
     # WAN Throughput History

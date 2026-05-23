@@ -181,21 +181,24 @@ class DataCollector:
             label   = "WAN2" if sub == "wan2" else "WAN"
             dev_wan = device_wan.get(label, {})
 
-            # Latency: health API first, then device wan1/wan2 data
+            # uptime_stats: per-WAN link uptime (seconds) from health monitors
+            uptime_stats_all = subsystem.get("uptime_stats") or {}
+            wan_stat = uptime_stats_all.get(label) or {}
+            wan_uptime = wan_stat.get("uptime")  # seconds this WAN link has been up
+
+            # Latency: health latency_average from monitors, fallback to device data
             latency = (
                 subsystem.get("latency")
+                or wan_stat.get("latency_average")
                 or dev_wan.get("latency")
                 or dev_wan.get("latency_ms")
             )
-            # WAN-specific uptime is not available from this API version;
-            # device uptime is stored separately via _collect_device_statistics()
-            uptime = None
             wan_ip = subsystem.get("wan_ip") or dev_wan.get("ip")
 
             self._db.insert_wan_status({
                 "interface": label,
                 "status":    subsystem.get("status", "unknown"),
-                "uptime":    uptime,
+                "uptime":    wan_uptime,
                 "latency":   latency,
                 "rx_bytes":  subsystem.get("rx_bytes-r"),
                 "tx_bytes":  subsystem.get("tx_bytes-r"),
@@ -203,6 +206,27 @@ class DataCollector:
                 "timestamp": ts,
             })
             saved_ifaces.add(label)
+
+            # WAN2 não tem subsistema próprio no health (firmware 10.3.58) —
+            # seus dados ficam em uptime_stats.WAN2 dentro do subsistema "wan"
+            if sub == "wan" and "WAN2" not in saved_ifaces:
+                wan2_stat = uptime_stats_all.get("WAN2") or {}
+                wan2_upt  = wan2_stat.get("uptime")
+                dev_wan2  = device_wan.get("WAN2", {})
+                wan2_ip   = dev_wan2.get("ip")
+                if wan2_upt or wan2_ip:
+                    self._db.insert_wan_status({
+                        "interface": "WAN2",
+                        "status":    "ok" if wan2_upt else "unknown",
+                        "uptime":    wan2_upt,
+                        "latency":   (wan2_stat.get("latency_average")
+                                      or dev_wan2.get("latency")),
+                        "rx_bytes":  dev_wan2.get("rx_bytes-r"),
+                        "tx_bytes":  dev_wan2.get("tx_bytes-r"),
+                        "wan_ip":    wan2_ip,
+                        "timestamp": ts,
+                    })
+                    saved_ifaces.add("WAN2")
 
         # Fallback: device wan1/wan2 data for any WAN the health API missed
         for label, dev_wan in device_wan.items():
@@ -1072,47 +1096,55 @@ class DataCollector:
 
     def _collect_wan_throughput(self) -> None:
         """
-        Coleta histórico de throughput WAN por hora via /stat/report/hourly.gw.
+        Coleta histórico de throughput WAN via /stat/report/hourly.gw.
 
-        Busca as últimas 25 horas para garantir que buckets da hora anterior
-        não sejam perdidos, usando deduplicação no DB para evitar duplicatas.
+        Busca desde o início do mês atual para acumular dados precisos de
+        uso mensal. A deduplicação no DB garante que buckets repetidos sejam
+        ignorados. Também coleta o bucket mensal (/stat/report/monthly.gw)
+        para exibição rápida de totais mensais.
         """
         import time as _time
-        end_ms   = int(_time.time() * 1000)
-        start_ms = end_ms - 25 * 3600 * 1000  # last 25 hours
 
-        buckets = self._api.get_gateway_report(
-            interval="hourly", start_ts=start_ms, end_ts=end_ms
-        )
-        if not buckets:
-            logger.debug("WAN throughput: endpoint /stat/report/hourly.gw sem dados")
-            return
+        now_utc   = datetime.utcnow()
+        end_ms    = int(_time.time() * 1000)
+        # Início do mês atual em UTC (ms)
+        month_start = datetime(now_utc.year, now_utc.month, 1)
+        start_ms  = int(month_start.timestamp()) * 1000
 
-        records: List[Dict] = []
-        for b in buckets:
-            # timestamp pode vir como epoch em segundos ("time") ou ms ("datetime")
-            raw_ts = b.get("time") or b.get("timestamp")
-            if raw_ts is None:
-                continue
-            try:
-                ts_sec = int(raw_ts)
-                # Se vier em milissegundos (> 1e10), converter para segundos
-                if ts_sec > 1_000_000_000_000:
-                    ts_sec = ts_sec // 1000
-                ts = datetime.utcfromtimestamp(ts_sec)
-            except (TypeError, ValueError):
-                continue
-            records.append({
-                "timestamp":  ts,
-                "rx_bytes":   int(b.get("wan-rx_bytes") or b.get("rx_bytes") or 0),
-                "tx_bytes":   int(b.get("wan-tx_bytes") or b.get("tx_bytes") or 0),
-                "rx_dropped": int(b.get("wan-rx_dropped") or 0),
-                "tx_dropped": int(b.get("wan-tx_dropped") or 0),
-            })
+        def _parse_buckets(raw_list: List[Dict], interval: str) -> None:
+            records: List[Dict] = []
+            for b in (raw_list or []):
+                raw_ts = b.get("time") or b.get("timestamp")
+                if raw_ts is None:
+                    continue
+                try:
+                    ts_sec = int(raw_ts)
+                    if ts_sec > 1_000_000_000_000:
+                        ts_sec = ts_sec // 1000
+                    ts = datetime.utcfromtimestamp(ts_sec)
+                except (TypeError, ValueError):
+                    continue
+                records.append({
+                    "timestamp":  ts,
+                    "rx_bytes":   int(b.get("wan-rx_bytes") or b.get("rx_bytes") or 0),
+                    "tx_bytes":   int(b.get("wan-tx_bytes") or b.get("tx_bytes") or 0),
+                    "rx_dropped": int(b.get("wan-rx_dropped") or 0),
+                    "tx_dropped": int(b.get("wan-tx_dropped") or 0),
+                })
+            if records:
+                inserted = self._db.insert_wan_throughput(records, interval=interval)
+                logger.info("WAN throughput [{}]: {} buckets, {} novos", interval, len(records), inserted)
 
-        if records:
-            inserted = self._db.insert_wan_throughput(records, interval="hourly")
-            logger.info("WAN throughput: {} buckets, {} novos inseridos", len(records), inserted)
+        # Hourly: mês inteiro (deduplicação ignora os que já existem)
+        hourly = self._api.get_gateway_report("hourly", start_ts=start_ms, end_ts=end_ms)
+        if not hourly:
+            logger.debug("WAN throughput: /stat/report/hourly.gw sem dados")
+        else:
+            _parse_buckets(hourly, "hourly")
+
+        # Monthly: bucket único do mês corrente (para totais rápidos)
+        monthly = self._api.get_gateway_report("monthly", start_ts=start_ms, end_ts=end_ms)
+        _parse_buckets(monthly, "monthly")
 
     # ------------------------------------------------------------------
     # Firewall Rules (/rest/firewallrule)

@@ -97,6 +97,9 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
         tx_str  = fmt_bytes_rate(row.get("tx_bytes"))
         color   = "#3fb950" if is_ok else "#ff7b72"
 
+        upt     = row.get("uptime")
+        upt_str = fmt_uptime(upt) if upt else "—"
+
         with col:
             st.markdown(
                 metric_card(
@@ -108,7 +111,7 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
                 ),
                 unsafe_allow_html=True,
             )
-            st.caption(f"Latência: **{lat_str}**")
+            st.caption(f"Uptime: **{upt_str}** &nbsp;|&nbsp; Latência: **{lat_str}**")
             st.caption(f"↓ {rx_str}  ↑ {tx_str}")
 
 
