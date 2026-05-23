@@ -263,7 +263,7 @@ def cmd_raw_dump() -> None:
     api.logout()
 
 
-
+def cmd_ui() -> None:
     logger.info("Starting Streamlit dashboard…")
     app_path = str(ROOT / "ui" / "app.py")
     subprocess.run(
