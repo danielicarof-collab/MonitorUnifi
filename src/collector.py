@@ -162,6 +162,33 @@ class DataCollector:
         devices     = self._api.get_devices()
         ts = datetime.utcnow()
 
+        # ── Pré-extrair dados chave do subsistema "wan" da health API ──────
+        # O firmware 10.3.58 retorna APENAS um subsistema "wan" (não "wan2").
+        # Dados de WAN2 ficam em uptime_stats.WAN2 dentro do mesmo subsistema.
+        # gw_system-stats.uptime é o uptime do gateway (UDM-Pro), disponível
+        # sempre que o subsistema "wan" estiver presente.
+        wan_sub = next(
+            (s for s in health_data if s.get("subsystem", "").lower() == "wan"), {}
+        )
+        www_sub = next(
+            (s for s in health_data if s.get("subsystem", "").lower() == "www"), {}
+        )
+        uptime_stats = wan_sub.get("uptime_stats") or {}
+        gw_sys       = wan_sub.get("gw_system-stats") or {}
+
+        # Uptime do gateway (UDM-Pro) — fallback quando uptime_stats.<WAN> ausente
+        try:
+            gw_uptime = int(gw_sys.get("uptime") or 0) or None
+        except (TypeError, ValueError):
+            gw_uptime = None
+
+        logger.info(
+            "WAN health: gw_uptime={}s, uptime_stats keys={}, www_latency={}ms",
+            gw_uptime,
+            list(uptime_stats.keys()),
+            www_sub.get("latency"),
+        )
+
         # Build supplemental data from /stat/device wan1/wan2 fields
         device_wan: Dict[str, Dict] = {}
         for dev in devices:
@@ -172,86 +199,59 @@ class DataCollector:
 
         saved_ifaces: set = set()
 
-        # Primary source: health API subsystems
-        for subsystem in health_data:
-            sub = subsystem.get("subsystem", "").lower()
-            if sub not in ("wan", "wan2"):
+        # ── Processar cada interface WAN ───────────────────────────────────
+        for iface_label in ("WAN", "WAN2"):
+            # Encontrar subsistema da health API (firmware antigo pode ter "wan2")
+            sub_key  = iface_label.lower()
+            sub_data = next(
+                (s for s in health_data if s.get("subsystem", "").lower() == sub_key),
+                wan_sub if iface_label == "WAN" else {},
+            )
+            if not sub_data and iface_label == "WAN":
                 continue
 
-            label   = "WAN2" if sub == "wan2" else "WAN"
-            dev_wan = device_wan.get(label, {})
+            dev_wan = device_wan.get(iface_label, {})
 
-            # uptime_stats: per-WAN link uptime (seconds) from health monitors
-            uptime_stats_all = subsystem.get("uptime_stats") or {}
-            wan_stat = uptime_stats_all.get(label) or {}
-            wan_uptime = wan_stat.get("uptime")  # seconds this WAN link has been up
+            # Uptime do link: uptime_stats.<IFACE>.uptime → gw_uptime como fallback
+            iface_stats = uptime_stats.get(iface_label) or {}
+            wan_uptime  = iface_stats.get("uptime") or gw_uptime
 
-            # Latency: health latency_average from monitors, fallback to device data
+            # Latência: monitors (uptime_stats) → www.latency → device
             latency = (
-                subsystem.get("latency")
-                or wan_stat.get("latency_average")
+                iface_stats.get("latency_average")
+                or sub_data.get("latency")
                 or dev_wan.get("latency")
                 or dev_wan.get("latency_ms")
+                or (www_sub.get("latency") if iface_label == "WAN" else None)
             )
-            wan_ip = subsystem.get("wan_ip") or dev_wan.get("ip")
+
+            wan_ip = sub_data.get("wan_ip") or dev_wan.get("ip")
+            status = sub_data.get("status") or ("ok" if wan_uptime else "unknown")
+
+            # Para WAN2: se não há subsistema próprio mas há dados em uptime_stats
+            if iface_label == "WAN2" and not wan_ip:
+                wan_ip = dev_wan.get("ip") or dev_wan.get("wan_ip")
+            if not wan_ip and not wan_uptime:
+                continue  # sem dados para esta interface
+
+            logger.info(
+                "WAN {}: status={} uptime={}s latency={}ms ip={}",
+                iface_label, status, wan_uptime, latency, wan_ip,
+            )
 
             self._db.insert_wan_status({
-                "interface": label,
-                "status":    subsystem.get("status", "unknown"),
+                "interface": iface_label,
+                "status":    status,
                 "uptime":    wan_uptime,
                 "latency":   latency,
-                "rx_bytes":  subsystem.get("rx_bytes-r"),
-                "tx_bytes":  subsystem.get("tx_bytes-r"),
+                "rx_bytes":  sub_data.get("rx_bytes-r") or dev_wan.get("rx_bytes-r"),
+                "tx_bytes":  sub_data.get("tx_bytes-r") or dev_wan.get("tx_bytes-r"),
                 "wan_ip":    wan_ip,
                 "timestamp": ts,
             })
-            saved_ifaces.add(label)
+            saved_ifaces.add(iface_label)
 
-            # WAN2 não tem subsistema próprio no health (firmware 10.3.58) —
-            # seus dados ficam em uptime_stats.WAN2 dentro do subsistema "wan"
-            if sub == "wan" and "WAN2" not in saved_ifaces:
-                wan2_stat = uptime_stats_all.get("WAN2") or {}
-                wan2_upt  = wan2_stat.get("uptime")
-                dev_wan2  = device_wan.get("WAN2", {})
-                wan2_ip   = dev_wan2.get("ip")
-                if wan2_upt or wan2_ip:
-                    self._db.insert_wan_status({
-                        "interface": "WAN2",
-                        "status":    "ok" if wan2_upt else "unknown",
-                        "uptime":    wan2_upt,
-                        "latency":   (wan2_stat.get("latency_average")
-                                      or dev_wan2.get("latency")),
-                        "rx_bytes":  dev_wan2.get("rx_bytes-r"),
-                        "tx_bytes":  dev_wan2.get("tx_bytes-r"),
-                        "wan_ip":    wan2_ip,
-                        "timestamp": ts,
-                    })
-                    saved_ifaces.add("WAN2")
-
-        # Fallback: device wan1/wan2 data for any WAN the health API missed
-        for label, dev_wan in device_wan.items():
-            if label in saved_ifaces:
-                continue
-            wan_ip  = dev_wan.get("ip") or dev_wan.get("wan_ip")
-            latency = dev_wan.get("latency") or dev_wan.get("latency_ms")
-            avail   = dev_wan.get("availability", 0)
-            if not wan_ip and latency is None:
-                continue
-            status = "ok" if (avail and float(avail) > 0) else "unknown"
-            self._db.insert_wan_status({
-                "interface": label,
-                "status":    status,
-                "uptime":    None,
-                "latency":   latency,
-                "rx_bytes":  dev_wan.get("rx_bytes-r"),
-                "tx_bytes":  dev_wan.get("tx_bytes-r"),
-                "wan_ip":    wan_ip,
-                "timestamp": ts,
-            })
-            saved_ifaces.add(label)
-            logger.debug("WAN {} coletado via device data (health API não retornou)", label)
-
-        logger.debug("WAN status snapshot salvo: {}", saved_ifaces)
+        logger.info("WAN status snapshot salvo: {}", saved_ifaces)
 
     # ------------------------------------------------------------------
     # Step 3: Security events — system-log v2 com fallback para v1

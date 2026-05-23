@@ -1147,72 +1147,79 @@ class DatabaseManager:
         } for r in rows])
 
     def get_system_uptime(self) -> Optional[int]:
-        """Returns the gateway (UDM-Pro/USG) uptime in seconds from the most recent snapshot.
-        Falls back to the device with the highest uptime if no gateway model is found."""
-        with self._session() as sess:
-            # Latest snapshot per device
-            subq = (
-                sess.query(
-                    DeviceStat.device_mac,
-                    func.max(DeviceStat.timestamp).label("max_ts"),
+        """Returns the gateway (UDM-Pro/USG) uptime in seconds.
+
+        Tenta em ordem:
+          1. device_stat (tabela com uptime por dispositivo)
+          2. wan_status.uptime para WAN (armazenado a partir de gw_system-stats ou
+             uptime_stats.WAN — ambos refletem o uptime do gateway/link WAN)
+        """
+        from sqlalchemy import or_
+        # ── 1. device_stat ────────────────────────────────────────────
+        try:
+            with self._session() as sess:
+                subq = (
+                    sess.query(
+                        DeviceStat.device_mac,
+                        func.max(DeviceStat.timestamp).label("max_ts"),
+                    )
+                    .group_by(DeviceStat.device_mac)
+                    .subquery()
                 )
-                .group_by(DeviceStat.device_mac)
-                .subquery()
-            )
-            base_q = (
-                sess.query(DeviceStat.uptime_sec)
-                .join(
-                    subq,
-                    (DeviceStat.device_mac == subq.c.device_mac)
-                    & (DeviceStat.timestamp == subq.c.max_ts),
-                )
-            )
-            # Prefer gateway models (UDM-Pro, USG, UDR, UNVR…)
-            from sqlalchemy import or_
-            gw_row = (
-                base_q.filter(
-                    or_(
-                        DeviceStat.device_model.like("UDM%"),
-                        DeviceStat.device_model.like("USG%"),
-                        DeviceStat.device_model.like("UDR%"),
-                        DeviceStat.device_model.like("UNVR%"),
+                base_q = (
+                    sess.query(DeviceStat.uptime_sec)
+                    .join(
+                        subq,
+                        (DeviceStat.device_mac == subq.c.device_mac)
+                        & (DeviceStat.timestamp == subq.c.max_ts),
                     )
                 )
-                .order_by(DeviceStat.uptime_sec.desc())
+                gw_row = (
+                    base_q.filter(
+                        or_(
+                            DeviceStat.device_model.like("UDM%"),
+                            DeviceStat.device_model.like("USG%"),
+                            DeviceStat.device_model.like("UDR%"),
+                            DeviceStat.device_model.like("UNVR%"),
+                        )
+                    )
+                    .order_by(DeviceStat.uptime_sec.desc())
+                    .first()
+                )
+                if gw_row and gw_row[0]:
+                    return gw_row[0]
+                row = base_q.order_by(DeviceStat.uptime_sec.desc()).first()
+                if row and row[0]:
+                    return row[0]
+        except Exception:
+            pass  # tabela pode não existir em instâncias antigas
+
+        # ── 2. wan_status.uptime para WAN (gw uptime / link uptime) ──
+        with self._session() as sess:
+            row = (
+                sess.query(WANStatus.uptime)
+                .filter(WANStatus.interface == "WAN", WANStatus.uptime.isnot(None))
+                .order_by(WANStatus.timestamp.desc())
                 .first()
             )
-            if gw_row and gw_row[0] is not None:
-                return gw_row[0]
-            # Fallback: highest uptime among all devices
-            row = base_q.order_by(DeviceStat.uptime_sec.desc()).first()
-        return row[0] if row else None
+            return row[0] if row else None
 
     def get_monthly_wan_bytes(self) -> Dict[str, int]:
         """
-        Uso mensal de dados WAN usando buckets horários de /stat/report/hourly.gw.
-        Cada bucket contém os bytes reais transferidos naquela hora (não uma taxa),
-        portanto a soma é precisa. Fallback para o bucket mensal se horário vazio.
+        Uso mensal de dados WAN.
+
+        Fonte primária: bucket mensal de /stat/report/monthly.gw — calculado pelo
+        controlador UniFi com precisão total do mês.
+
+        Fallback: soma dos buckets horários — pode estar incompleta se a API retornar
+        apenas os últimos N pontos (tipicamente ~7 dias), gerando valor subestimado.
+
         Returns {"rx_bytes": N, "tx_bytes": N}.
         """
         now   = datetime.utcnow()
         start = datetime(now.year, now.month, 1)
         with self._session() as sess:
-            # Preferir soma dos buckets horários do mês (mais granular e preciso)
-            row = (
-                sess.query(
-                    func.sum(WANThroughput.rx_bytes),
-                    func.sum(WANThroughput.tx_bytes),
-                )
-                .filter(
-                    WANThroughput.interval == "hourly",
-                    WANThroughput.timestamp >= start,
-                )
-                .first()
-            )
-            if row and row[0]:
-                return {"rx_bytes": int(row[0]), "tx_bytes": int(row[1] or 0)}
-
-            # Fallback: bucket mensal único
+            # Primário: bucket mensal (total exato do mês completo)
             row_m = (
                 sess.query(
                     func.sum(WANThroughput.rx_bytes),
@@ -1226,6 +1233,21 @@ class DatabaseManager:
             )
             if row_m and row_m[0]:
                 return {"rx_bytes": int(row_m[0]), "tx_bytes": int(row_m[1] or 0)}
+
+            # Fallback: soma dos buckets horários disponíveis
+            row = (
+                sess.query(
+                    func.sum(WANThroughput.rx_bytes),
+                    func.sum(WANThroughput.tx_bytes),
+                )
+                .filter(
+                    WANThroughput.interval == "hourly",
+                    WANThroughput.timestamp >= start,
+                )
+                .first()
+            )
+            if row and row[0]:
+                return {"rx_bytes": int(row[0]), "tx_bytes": int(row[1] or 0)}
 
         return {"rx_bytes": 0, "tx_bytes": 0}
 
