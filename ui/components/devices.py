@@ -224,18 +224,29 @@ def _render_classification_tab(type_df: pd.DataFrame, all_df: pd.DataFrame) -> N
 # Main render
 # ------------------------------------------------------------------
 
+_ONLINE_WINDOW_MINUTES = 10   # clientes vistos nos últimos N minutos → "online"
+
+
 def render(db: DatabaseManager) -> None:
     st.header("Inventário de Dispositivos")
 
-    snap_df  = _load_online(db)
-    all_df   = _load_all(db)
-    type_df  = _load_type_counts(db)
+    all_snap_df = _load_online(db)
+    all_df      = _load_all(db)
+    type_df     = _load_type_counts(db)
+
+    # Filtrar apenas snapshots recentes para "Online Agora"
+    snap_df = all_snap_df
+    if not snap_df.empty and "timestamp" in snap_df.columns:
+        cutoff  = pd.Timestamp.utcnow() - pd.Timedelta(minutes=_ONLINE_WINDOW_MINUTES)
+        ts_col  = pd.to_datetime(snap_df["timestamp"])
+        snap_df = snap_df[ts_col >= cutoff].copy()
 
     # Quick KPI row
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(
-            metric_card("Online Agora", str(len(snap_df)), "Últimos snapshots",
+            metric_card("Online Agora", str(len(snap_df)),
+                        f"Últimos {_ONLINE_WINDOW_MINUTES} min",
                         "📡", "#3fb950"),
             unsafe_allow_html=True,
         )
