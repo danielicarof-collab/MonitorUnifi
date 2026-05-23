@@ -1097,3 +1097,92 @@ class DatabaseManager:
             "up_rate_bps": r.up_bytes_rate,
             "down_rate_bps": r.down_bytes_rate,
         } for r in rows])
+
+    # ------------------------------------------------------------------
+    # VPN Status
+    # ------------------------------------------------------------------
+
+    def insert_vpn_statuses(self, records: List[Dict[str, Any]], ts: datetime) -> None:
+        with self._session() as sess:
+            for r in records:
+                sess.add(VPNStatus(
+                    timestamp   = ts,
+                    tunnel_name = r.get("tunnel_name"),
+                    status      = r.get("status", "unknown"),
+                    remote_ip   = r.get("remote_ip"),
+                    uptime      = r.get("uptime"),
+                ))
+            sess.commit()
+
+    def get_vpn_status(self) -> pd.DataFrame:
+        """Latest snapshot of each VPN tunnel/session."""
+        with self._session() as sess:
+            subq = (
+                sess.query(
+                    VPNStatus.tunnel_name,
+                    func.max(VPNStatus.timestamp).label("max_ts"),
+                )
+                .group_by(VPNStatus.tunnel_name)
+                .subquery()
+            )
+            rows = (
+                sess.query(VPNStatus)
+                .join(
+                    subq,
+                    (VPNStatus.tunnel_name == subq.c.tunnel_name)
+                    & (VPNStatus.timestamp == subq.c.max_ts),
+                )
+                .all()
+            )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "tunnel_name": r.tunnel_name,
+            "status":      r.status,
+            "remote_ip":   r.remote_ip,
+            "uptime":      r.uptime,
+            "timestamp":   r.timestamp,
+        } for r in rows])
+
+    def get_system_uptime(self) -> Optional[int]:
+        """Returns the most recent device uptime in seconds."""
+        with self._session() as sess:
+            row = (
+                sess.query(DeviceStat.uptime_sec)
+                .order_by(DeviceStat.timestamp.desc())
+                .first()
+            )
+        return row[0] if row else None
+
+    def get_monthly_wan_bytes(self) -> Dict[str, int]:
+        """
+        Approximate monthly WAN data usage by summing WANStatus rx/tx bytes
+        over the current calendar month. Since we store rate (B/s) × poll_interval,
+        accumulate using the time delta between consecutive samples.
+        Returns {"rx_bytes": N, "tx_bytes": N}.
+        """
+        now   = datetime.utcnow()
+        start = datetime(now.year, now.month, 1)
+        with self._session() as sess:
+            rows = (
+                sess.query(WANStatus.timestamp, WANStatus.rx_bytes, WANStatus.tx_bytes)
+                .filter(
+                    WANStatus.timestamp >= start,
+                    WANStatus.interface == "WAN",
+                )
+                .order_by(WANStatus.timestamp.asc())
+                .all()
+            )
+        if len(rows) < 2:
+            return {"rx_bytes": 0, "tx_bytes": 0}
+
+        total_rx = total_tx = 0
+        for i in range(1, len(rows)):
+            prev_ts, _, _ = rows[i - 1]
+            curr_ts, rx, tx = rows[i]
+            dt = (curr_ts - prev_ts).total_seconds()
+            if dt <= 0 or dt > 600:  # skip gaps > 10 min
+                continue
+            total_rx += int((rx or 0) * dt)
+            total_tx += int((tx or 0) * dt)
+        return {"rx_bytes": total_rx, "tx_bytes": total_tx}

@@ -82,6 +82,7 @@ class DataCollector:
             self._collect_device_statistics()
             self._collect_port_stats()
             self._collect_network_statistics()
+            self._collect_vpn_status()
             self._process_events()
             self._collect_dpi()
             self._collect_ap_stats()
@@ -183,16 +184,9 @@ class DataCollector:
                 or dev_wan.get("latency")
                 or dev_wan.get("latency_ms")
             )
-            # Uptime: health API has no direct 'uptime' field;
-            # gw_system-stats.uptime is the device uptime (string, e.g. "287874")
-            gw_stats   = subsystem.get("gw_system-stats") or {}
-            gw_uptime_raw = gw_stats.get("uptime")
+            # WAN-specific uptime is not available from this API version;
+            # device uptime is stored separately via _collect_device_statistics()
             uptime = None
-            if gw_uptime_raw is not None:
-                try:
-                    uptime = int(float(gw_uptime_raw))
-                except (TypeError, ValueError):
-                    pass
             wan_ip = subsystem.get("wan_ip") or dev_wan.get("ip")
 
             self._db.insert_wan_status({
@@ -208,17 +202,6 @@ class DataCollector:
             saved_ifaces.add(label)
 
         # Fallback: device wan1/wan2 data for any WAN the health API missed
-        # Get device uptime to use as WAN uptime proxy
-        device_uptime: Optional[int] = None
-        for dev in devices:
-            raw = (dev.get("system-stats") or dev.get("sys_stats") or {}).get("uptime")
-            if raw is not None:
-                try:
-                    device_uptime = int(float(raw))
-                except (TypeError, ValueError):
-                    pass
-                break
-
         for label, dev_wan in device_wan.items():
             if label in saved_ifaces:
                 continue
@@ -231,7 +214,7 @@ class DataCollector:
             self._db.insert_wan_status({
                 "interface": label,
                 "status":    status,
-                "uptime":    device_uptime,
+                "uptime":    None,
                 "latency":   latency,
                 "rx_bytes":  dev_wan.get("rx_bytes-r"),
                 "tx_bytes":  dev_wan.get("tx_bytes-r"),
@@ -1079,3 +1062,49 @@ class DataCollector:
             })
 
         logger.debug("Network statistics snapshot saved for {} networks", len(networks))
+
+    # ------------------------------------------------------------------
+    # VPN status — remote user sessions + site-to-site tunnels
+    # ------------------------------------------------------------------
+
+    def _collect_vpn_status(self) -> None:
+        """
+        Coleta status de VPN:
+          - Sessões de usuário remoto (/stat/remoteuservpn)
+          - Configuração de túneis site-to-site (/rest/vpnconn)
+        """
+        ts = datetime.utcnow()
+        records: List[Dict] = []
+
+        # ── Sessões de usuário remoto ─────────────────────────────────
+        sessions = self._api.get_vpn_clients()
+        for s in sessions:
+            name = (
+                s.get("name") or s.get("username")
+                or s.get("real_ip") or "Remote User"
+            )
+            records.append({
+                "tunnel_name": name,
+                "status":      "running",
+                "remote_ip":   s.get("real_ip") or s.get("remote_ip"),
+                "uptime":      s.get("uptime") or s.get("connected_at"),
+            })
+
+        # ── Túneis site-to-site ───────────────────────────────────────
+        tunnels = self._api._request("GET", "/rest/vpnconn") or []
+        if isinstance(tunnels, list):
+            for t in tunnels:
+                tname = t.get("name") or t.get("_id") or "VPN Tunnel"
+                status = "running" if t.get("running") or t.get("enabled") else "down"
+                records.append({
+                    "tunnel_name": tname,
+                    "status":      status,
+                    "remote_ip":   t.get("remote_gateway") or t.get("peer_ip"),
+                    "uptime":      None,
+                })
+
+        if records:
+            self._db.insert_vpn_statuses(records, ts)
+            logger.info("VPN status: {} sessões/túneis ativos", len(records))
+        else:
+            logger.debug("Nenhuma sessão VPN ativa")

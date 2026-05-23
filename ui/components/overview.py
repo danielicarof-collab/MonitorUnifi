@@ -47,6 +47,21 @@ def _load_latest_snapshots(_db: DatabaseManager) -> pd.DataFrame:
     return _db.get_latest_client_snapshots()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_vpn(_db: DatabaseManager) -> pd.DataFrame:
+    return _db.get_vpn_status()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_system_uptime(_db: DatabaseManager) -> int | None:
+    return _db.get_system_uptime()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_monthly_bytes(_db: DatabaseManager) -> dict:
+    return _db.get_monthly_wan_bytes()
+
+
 # ------------------------------------------------------------------
 # WAN section
 # ------------------------------------------------------------------
@@ -63,15 +78,14 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
 
     cols = st.columns(len(wan_df))
     for col, (_, row) in zip(cols, wan_df.iterrows()):
-        is_ok  = str(row.get("status", "")).lower() == "ok"
-        badge  = "🟢 Online" if is_ok else "🔴 Offline"
-        iface  = row.get("interface", "WAN")
-        lat    = row.get("latency_ms")
+        is_ok   = str(row.get("status", "")).lower() == "ok"
+        badge   = "🟢 Online" if is_ok else "🔴 Offline"
+        iface   = row.get("interface", "WAN")
+        lat     = row.get("latency_ms")
         lat_str = f"{int(lat)} ms" if pd.notna(lat) else "—"
-        uptime_str = fmt_uptime(row.get("uptime"))
-        rx_str = fmt_bytes_rate(row.get("rx_bytes"))
-        tx_str = fmt_bytes_rate(row.get("tx_bytes"))
-        color  = "#3fb950" if is_ok else "#ff7b72"
+        rx_str  = fmt_bytes_rate(row.get("rx_bytes"))
+        tx_str  = fmt_bytes_rate(row.get("tx_bytes"))
+        color   = "#3fb950" if is_ok else "#ff7b72"
 
         with col:
             st.markdown(
@@ -84,7 +98,7 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
                 ),
                 unsafe_allow_html=True,
             )
-            st.caption(f"Latência: **{lat_str}**  |  Uptime: **{uptime_str}**")
+            st.caption(f"Latência: **{lat_str}**")
             st.caption(f"↓ {rx_str}  ↑ {tx_str}")
 
 
@@ -268,6 +282,73 @@ def _render_snapshot_status(snap_df: pd.DataFrame) -> None:
 # Main render
 # ------------------------------------------------------------------
 
+def _render_system_bar(db: DatabaseManager) -> None:
+    """System uptime, monthly WAN data and VPN status in one row."""
+    uptime_sec   = _load_system_uptime(db)
+    monthly      = _load_monthly_bytes(db)
+    vpn_df       = _load_vpn(db)
+
+    cols = st.columns(4)
+
+    # System Uptime
+    with cols[0]:
+        st.markdown(
+            metric_card("System Uptime", fmt_uptime(uptime_sec),
+                        "UDM-Pro online", "⏱️", "#58a6ff"),
+            unsafe_allow_html=True,
+        )
+
+    # Monthly Download
+    with cols[1]:
+        rx = monthly.get("rx_bytes", 0)
+        st.markdown(
+            metric_card("Download Mensal", fmt_bytes(rx),
+                        "Mês atual (est.)", "⬇️", "#3fb950"),
+            unsafe_allow_html=True,
+        )
+
+    # Monthly Upload
+    with cols[2]:
+        tx = monthly.get("tx_bytes", 0)
+        st.markdown(
+            metric_card("Upload Mensal", fmt_bytes(tx),
+                        "Mês atual (est.)", "⬆️", "#ffa657"),
+            unsafe_allow_html=True,
+        )
+
+    # VPN
+    with cols[3]:
+        if vpn_df.empty:
+            vpn_val   = "Sem dados"
+            vpn_sub   = "Nenhuma sessão ativa"
+            vpn_color = "#484f58"
+        else:
+            running = vpn_df[vpn_df["status"] == "running"]
+            vpn_val   = str(len(running))
+            vpn_sub   = f"de {len(vpn_df)} túneis/sessões"
+            vpn_color = "#3fb950" if len(running) > 0 else "#ff7b72"
+        st.markdown(
+            metric_card("VPN Ativas", vpn_val, vpn_sub, "🔒", vpn_color),
+            unsafe_allow_html=True,
+        )
+
+    # VPN detail table if there's data
+    if not vpn_df.empty:
+        with st.expander("Detalhes VPN", expanded=False):
+            display = vpn_df.copy()
+            display["Status"] = display["status"].apply(
+                lambda s: "🟢 Ativo" if s == "running" else "🔴 Inativo"
+            )
+            display["Uptime"] = display["uptime"].apply(fmt_uptime)
+            st.dataframe(
+                display[["tunnel_name", "Status", "remote_ip", "Uptime"]].rename(
+                    columns={"tunnel_name": "Túnel/Usuário", "remote_ip": "IP Remoto"}
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 def render(db: DatabaseManager) -> None:
     st.header("Visão Geral da Rede")
 
@@ -279,6 +360,11 @@ def render(db: DatabaseManager) -> None:
 
     # ── Row 1: WAN cards ──────────────────────────────────────────
     _render_wan(wan_df)
+
+    st.divider()
+
+    # ── Row 1b: System Uptime + Monthly data + VPN ────────────────
+    _render_system_bar(db)
 
     st.divider()
 
