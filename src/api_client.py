@@ -87,6 +87,9 @@ class UniFiAPIClient:
         self._session.verify = verify_ssl
         self._csrf_token: Optional[str] = None
         self._authenticated: bool       = False
+        # Definido como False na primeira vez que a integrations API retorna 401,
+        # evitando tentativas repetidas e logs de ERROR em cada ciclo.
+        self._integrations_available: Optional[bool] = None
 
     # ── bases de URL ─────────────────────────────────────────────────
 
@@ -436,12 +439,24 @@ class UniFiAPIClient:
             if not self.login():
                 return None
 
+        # Pula integrations completamente se já sabemos que retorna 401
+        if self._integrations_available is False:
+            return None
+
         url = f"{self._base_integrations_v1}{endpoint}"
         try:
             resp = self._session.get(url, headers=self._headers_integrations(), timeout=30, **kwargs)
             if resp.status_code == 401:
                 if self._use_api_key:
-                    logger.error("API Key inválida ou sem permissão para {} (401).", endpoint)
+                    if self._integrations_available is None:
+                        # Primeira falha — loga aviso e desabilita para esta sessão
+                        logger.warning(
+                            "Integrations API retornou 401 em {} — "
+                            "API Key sem permissão de Network. "
+                            "Usando apenas endpoints legados (cookie auth).",
+                            endpoint,
+                        )
+                        self._integrations_available = False
                     return None
                 logger.warning("Sessão expirada (integrations) — re-autenticando…")
                 self._authenticated = False
@@ -458,6 +473,7 @@ class UniFiAPIClient:
                 )
                 return None
             resp.raise_for_status()
+            self._integrations_available = True  # confirmado funcionando
             body = resp.json()
             return body.get("data", body)
         except requests.Timeout:
@@ -963,16 +979,13 @@ class UniFiAPIClient:
         Obtém informações sobre todas as redes configuradas.
 
         Prioridade:
-          1. Integrations API v1  → /proxy/network/integrations/v1/sites/{site}/networks
-             Quando API Key configurada. Retorna: name, ipSubnet, numClients,
-             upBytes, downBytes, upBytesRate, downBytesRate
-          2. Legacy v1            → /proxy/network/api/s/{site}/rest/networkconf
-             Fallback — retorna apenas configuração, sem métricas de tráfego.
+          1. Integrations API v1  → retorna métricas de tráfego por rede
+             (só funciona quando API Key tem permissão de Network)
+          2. Legacy v1            → /rest/networkconf — só configuração, sem tráfego.
         """
-        if self._use_api_key:
-            result = self._request_integrations("/networks")
-            if result is not None:
-                return result if isinstance(result, list) else []
+        result = self._request_integrations("/networks")
+        if result is not None:
+            return result if isinstance(result, list) else []
 
         result = self._request("GET", "/rest/networkconf")
         return result if isinstance(result, list) else []
