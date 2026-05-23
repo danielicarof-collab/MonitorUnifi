@@ -1246,39 +1246,55 @@ class DataCollector:
 
             if tunnel_meta:
                 import time as _time
+                from datetime import datetime as _dt, timezone as _tz
 
-                # ── A. /stat/health ──────────────────────────────────────
+                # ── A. /stat/health — apenas subsistemas VPN/IPSec ──────
+                # Não usar "wan": WAN health != VPN health
                 health_data = self._api.get_health()
                 health_subsystems = {
                     sub.get("subsystem", "").lower(): sub.get("status", "")
                     for sub in health_data if sub.get("subsystem")
                 }
-                logger.debug("VPN: health subsystems disponíveis: {}", health_subsystems)
+                logger.info("VPN: health subsystems: {}", health_subsystems)
 
                 vpn_health_ok: Optional[bool] = None
-                for key in ("vpn", "ipsec", "wan"):
+                for key in ("vpn", "ipsec"):
                     if key in health_subsystems:
                         vpn_health_ok = health_subsystems[key].lower() == "ok"
-                        logger.debug("VPN: health[{}]={}", key, health_subsystems[key])
+                        logger.info("VPN: health[{}]={}", key, health_subsystems[key])
                         break
 
-                # ── B. Heurística por timestamp ──────────────────────────
-                # O syslog só guarda eventos não-reconhecidos. Eventos de
-                # reconexão são auto-reconhecidos e purgados. Se o evento
-                # DISCONNECTED mais recente for antigo (> 2h), é seguro
-                # assumir que o túnel reconectou e está online.
+                # ── B. Heurística por timestamp dos eventos syslog ───────
+                # Syslog só guarda eventos não-reconhecidos. Se o evento
+                # DISCONNECTED mais recente for antigo (> 2h), o túnel
+                # reconectou e o evento de reconexão foi auto-purgado.
                 if vpn_health_ok is None:
                     now_ts = _time.time()
-                    newest_ts = max(
-                        (ev.get("datetime") or ev.get("timestamp") or 0
-                         for ev in vpn_events),
-                        default=0,
-                    )
-                    age_hours = (now_ts - float(newest_ts)) / 3600 if newest_ts else 999
+
+                    def _parse_ts(ev: Dict) -> float:
+                        raw = ev.get("time") or ev.get("timestamp")
+                        if raw:
+                            try:
+                                ts = float(raw)
+                                return ts / 1000 if ts > 4_102_444_800 else ts
+                            except (ValueError, TypeError):
+                                pass
+                        raw = ev.get("datetime") or ev.get("date")
+                        if raw:
+                            try:
+                                s = str(raw).replace("Z", "+00:00")
+                                return _dt.fromisoformat(s).timestamp()
+                            except (ValueError, TypeError):
+                                pass
+                        return 0.0
+
+                    timestamps = [_parse_ts(ev) for ev in vpn_events]
+                    newest_ts  = max(timestamps) if timestamps else 0.0
+                    age_hours  = (now_ts - newest_ts) / 3600 if newest_ts else 999.0
                     vpn_health_ok = age_hours > 2
                     logger.info(
-                        "VPN: health subsystem VPN não encontrado; "
-                        "evento mais recente tem {:.1f}h → assumindo {}",
+                        "VPN: sem subsistema vpn/ipsec no health; "
+                        "evento mais recente tem {:.1f}h → {}",
                         age_hours,
                         "online" if vpn_health_ok else "offline",
                     )
