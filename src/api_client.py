@@ -610,6 +610,39 @@ class UniFiAPIClient:
             return result["data"] if isinstance(result["data"], list) else []
         return []
 
+    def get_site_to_site_tunnels_integrations(self) -> Optional[List[Dict]]:
+        """
+        Túneis VPN site-to-site via Integrations API (Network API 10.3.58).
+
+        Endpoint: GET /v1/sites/{siteId}/vpn/site-to-site-tunnels
+        Requer API Key com permissão de Network.
+        Retorna campos: name, status, uptimeSec, remoteIp, wanId.
+        Retorna None se endpoint não disponível ou sem permissão.
+        """
+        if self._integrations_available is False:
+            return None
+        result = self._request_integrations("/vpn/site-to-site-tunnels")
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "data" in result:
+            d = result["data"]
+            return d if isinstance(d, list) else []
+        return None
+
+    def get_device_statistics_latest(self, device_id: str) -> Optional[Dict]:
+        """
+        Estatísticas em tempo real de um dispositivo via Integrations API.
+
+        Endpoint: GET /v1/sites/{siteId}/devices/{deviceId}/statistics/latest
+        Retorna: uptimeSec, cpuUtilizationPct, memoryUtilizationPct, uplink{txRateBps, rxRateBps}
+        """
+        if self._integrations_available is False:
+            return None
+        result = self._request_integrations(f"/devices/{device_id}/statistics/latest")
+        if isinstance(result, dict):
+            return result
+        return None
+
     def get_wan_interfaces(self) -> List[Dict]:
         """
         Interfaces WAN disponíveis no site.

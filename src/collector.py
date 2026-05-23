@@ -1212,41 +1212,70 @@ class DataCollector:
         if sessions:
             logger.debug("VPN: {} sessões de usuário remoto", len(sessions))
 
-        # ── 2. Túneis site-to-site (/stat/ipsecvpn) ──────────────────
-        s2s_list = self._api.get_site_to_site_vpn()
-        for t in s2s_list:
-            raw_status = str(t.get("status") or "").upper()
-            if raw_status in ("CONNECTED", "UP", "ACTIVE"):
-                running = True
-            elif raw_status in ("DISCONNECTED", "DOWN", "INACTIVE"):
-                running = False
-            else:
-                running = bool(
-                    t.get("running") or t.get("is_up") or t.get("established")
-                )
-            uptime_val = t.get("uptime") or t.get("uptimeSec")
-            try:
-                uptime_sec: Optional[int] = int(uptime_val) if uptime_val is not None else None
-            except (TypeError, ValueError):
-                uptime_sec = None
-            tname = (
-                t.get("name") or t.get("_id")
-                or t.get("remoteHost") or t.get("remote_gateway") or "IPSec"
+        # ── 2. Túneis site-to-site — Integrations API (com uptime real) ──────
+        # Endpoint oficial Network API 10.3.58: GET /v1/sites/{siteId}/vpn/site-to-site-tunnels
+        # Retorna campos: name, status (CONNECTED/DISCONNECTED), uptimeSec, remoteIp, wanId
+        integ_tunnels = self._api.get_site_to_site_tunnels_integrations()
+        if integ_tunnels is not None:
+            for t in integ_tunnels:
+                raw_status = str(t.get("status") or "").upper()
+                running = raw_status in ("CONNECTED", "UP", "ACTIVE")
+                uptime_val = t.get("uptimeSec") or t.get("uptime")
+                try:
+                    uptime_sec: Optional[int] = int(uptime_val) if uptime_val is not None else None
+                except (TypeError, ValueError):
+                    uptime_sec = None
+                records.append({
+                    "tunnel_name": t.get("name") or t.get("id") or "VPN Tunnel",
+                    "status":      "running" if running else "down",
+                    "remote_ip":   t.get("remoteIp") or t.get("remote_ip"),
+                    "uptime":      uptime_sec,
+                })
+            logger.info(
+                "VPN: {} túneis via Integrations API /vpn/site-to-site-tunnels",
+                len(integ_tunnels),
             )
-            remote = (
-                t.get("remoteHost") or t.get("remote_gateway")
-                or t.get("peer_ip") or t.get("remote_host")
-            )
-            records.append({
-                "tunnel_name": tname,
-                "status":      "running" if running else "down",
-                "remote_ip":   remote,
-                "uptime":      uptime_sec,
-            })
-        if s2s_list:
-            logger.info("VPN: {} túneis site-to-site via /stat/ipsecvpn", len(s2s_list))
 
-        # ── 3. System-log VPN + /stat/health ─────────────────────────────
+        # ── 3. Túneis site-to-site — legado (/stat/ipsecvpn) ──────────────
+        # Só consulta se a Integrations API não retornou dados (firmware antigo)
+        got_legacy_s2s = False
+        if integ_tunnels is None:
+            s2s_list = self._api.get_site_to_site_vpn()
+            for t in s2s_list:
+                raw_status = str(t.get("status") or "").upper()
+                if raw_status in ("CONNECTED", "UP", "ACTIVE"):
+                    running = True
+                elif raw_status in ("DISCONNECTED", "DOWN", "INACTIVE"):
+                    running = False
+                else:
+                    running = bool(
+                        t.get("running") or t.get("is_up") or t.get("established")
+                    )
+                uptime_val = t.get("uptime") or t.get("uptimeSec")
+                try:
+                    uptime_sec = int(uptime_val) if uptime_val is not None else None
+                except (TypeError, ValueError):
+                    uptime_sec = None
+                tname = (
+                    t.get("name") or t.get("_id")
+                    or t.get("remoteHost") or t.get("remote_gateway") or "IPSec"
+                )
+                remote = (
+                    t.get("remoteHost") or t.get("remote_gateway")
+                    or t.get("peer_ip") or t.get("remote_host")
+                )
+                records.append({
+                    "tunnel_name": tname,
+                    "status":      "running" if running else "down",
+                    "remote_ip":   remote,
+                    "uptime":      uptime_sec,
+                })
+            if s2s_list:
+                got_legacy_s2s = True
+                logger.info("VPN: {} túneis site-to-site via /stat/ipsecvpn", len(s2s_list))
+
+        # ── 4. System-log VPN + /stat/health (fallback final) ────────────────
+        # Usado apenas quando nem a Integrations API nem /stat/ipsecvpn retornaram dados.
         # Formato dos eventos (Network 10.3.58 / firmware 5.0.16):
         #   event: "VPN_SITE_TO_SITE_CONNECTED" | "VPN_SITE_TO_SITE_DISCONNECTED"
         #   parameters.NETWORK.name  → nome do túnel (ex: "VIVO-DC")
@@ -1257,7 +1286,7 @@ class DataCollector:
         # de reconexão são purgados rapidamente → não refletem estado ATUAL.
         # Por isso usamos o syslog apenas para descobrir nomes/IPs dos túneis
         # e o /stat/health para confirmar o estado operacional corrente.
-        if not s2s_list:
+        if integ_tunnels is None and not got_legacy_s2s:
             import time as _time
             vpn_events = self._api.get_vpn_syslog_events(page_size=200)
 

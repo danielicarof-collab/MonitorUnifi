@@ -225,8 +225,18 @@ def cmd_raw_dump() -> None:
     """Dump JSON bruto dos endpoints críticos para diagnóstico de campo."""
     import json
     api = _build_api()
+    api.discover_site()
+
+    def _first_device_id() -> str:
+        devs = api.get_devices() or []
+        for d in devs:
+            if d.get("type") in ("ugw", "udm", "usg"):
+                return d.get("_id") or d.get("id") or ""
+        return (devs[0].get("_id") or devs[0].get("id") or "") if devs else ""
 
     endpoints = [
+        # ── Legados (cookie auth) ──────────────────────────────────────
+        ("stat/health",           lambda: api.get_health()),
         ("stat/ipsecvpn",         lambda: api._request("GET", "/stat/ipsecvpn")),
         ("stat/vpn",              lambda: api._request("GET", "/stat/vpn")),
         ("stat/device (uptime)",  lambda: [
@@ -234,17 +244,24 @@ def cmd_raw_dump() -> None:
              if k in ("name","model","mac","uptime","type","_id")}
             for d in (api.get_devices() or [])
         ]),
-        ("stat/device vpn_keys",  lambda: [
-            {k: v for k, v in d.items()
-             if "vpn" in k.lower() or "ipsec" in k.lower() or k in ("name","model","mac")}
-            for d in (api.get_devices() or [])
-            if any("vpn" in k.lower() or "ipsec" in k.lower() for k in d)
-        ]),
         ("stat/report/monthly.gw", lambda: api._request("POST", "/stat/report/monthly.gw",
             json={"attrs": ["wan-rx_bytes","wan-tx_bytes","time"]})),
-        ("stat/report/daily.gw",   lambda: api._request("POST", "/stat/report/daily.gw",
-            json={"attrs": ["wan-rx_bytes","wan-tx_bytes","time"]})),
-        ("stat/health",           lambda: api.get_health()),
+        ("stat/report/hourly.gw (últimas 3h)", lambda: api._request(
+            "POST", "/stat/report/hourly.gw",
+            json={"attrs": ["wan-rx_bytes","wan-tx_bytes","time"],
+                  "start": int(__import__("time").time() - 3*3600) * 1000,
+                  "end":   int(__import__("time").time()) * 1000})),
+        # ── Integrations API v1 (API Key) ──────────────────────────────
+        ("integrations/vpn/site-to-site-tunnels",
+            lambda: api.get_site_to_site_tunnels_integrations()),
+        ("integrations/wans",     lambda: api.get_wan_interfaces()),
+        ("integrations/vpn/servers", lambda: api.get_vpn_servers()),
+        ("integrations/networks", lambda: api.get_networks()),
+        ("integrations/devices/stats (gateway)", lambda: (
+            lambda dev_id: api.get_device_statistics_latest(dev_id) if dev_id else "sem gateway detectado"
+        )(_first_device_id())),
+        # ── System-log VPN (syslog heurístico) ────────────────────────
+        ("system-log VPN events (últimos 10)", lambda: api.get_vpn_syslog_events(page_size=10)),
     ]
 
     print("\n" + "═" * 62)
