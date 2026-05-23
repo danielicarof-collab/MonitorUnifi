@@ -221,7 +221,49 @@ def cmd_diagnose() -> None:
     api.logout()
 
 
-def cmd_ui() -> None:
+def cmd_raw_dump() -> None:
+    """Dump JSON bruto dos endpoints críticos para diagnóstico de campo."""
+    import json
+    api = _build_api()
+
+    endpoints = [
+        ("stat/ipsecvpn",         lambda: api._request("GET", "/stat/ipsecvpn")),
+        ("stat/vpn",              lambda: api._request("GET", "/stat/vpn")),
+        ("stat/device (uptime)",  lambda: [
+            {k: v for k, v in d.items()
+             if k in ("name","model","mac","uptime","type","_id")}
+            for d in (api.get_devices() or [])
+        ]),
+        ("stat/device vpn_keys",  lambda: [
+            {k: v for k, v in d.items()
+             if "vpn" in k.lower() or "ipsec" in k.lower() or k in ("name","model","mac")}
+            for d in (api.get_devices() or [])
+            if any("vpn" in k.lower() or "ipsec" in k.lower() for k in d)
+        ]),
+        ("stat/report/monthly.gw", lambda: api._request("POST", "/stat/report/monthly.gw",
+            json={"attrs": ["wan-rx_bytes","wan-tx_bytes","time"]})),
+        ("stat/report/daily.gw",   lambda: api._request("POST", "/stat/report/daily.gw",
+            json={"attrs": ["wan-rx_bytes","wan-tx_bytes","time"]})),
+        ("stat/health",           lambda: api.get_health()),
+    ]
+
+    print("\n" + "═" * 62)
+    print("  raw-dump — JSON bruto dos endpoints críticos")
+    print("═" * 62 + "\n")
+
+    for label, fn in endpoints:
+        print(f"── {label} {'─' * max(0, 55 - len(label))}")
+        try:
+            data = fn()
+            print(json.dumps(data, indent=2, default=str, ensure_ascii=False))
+        except Exception as exc:
+            print(f"  ERRO: {exc}")
+        print()
+
+    api.logout()
+
+
+
     logger.info("Starting Streamlit dashboard…")
     app_path = str(ROOT / "ui" / "app.py")
     subprocess.run(
@@ -241,6 +283,7 @@ COMMANDS = {
     "ui":           cmd_ui,
     "init-db":      cmd_init_db,
     "diagnose":     cmd_diagnose,
+    "raw-dump":     cmd_raw_dump,
 }
 
 if __name__ == "__main__":
