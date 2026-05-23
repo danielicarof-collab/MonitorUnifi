@@ -1274,21 +1274,29 @@ class DataCollector:
                 got_legacy_s2s = True
                 logger.info("VPN: {} túneis site-to-site via /stat/ipsecvpn", len(s2s_list))
 
-        # ── 4. System-log VPN + /stat/health (fallback final) ────────────────
-        # Usado apenas quando nem a Integrations API nem /stat/ipsecvpn retornaram dados.
+        # ── 4. System-log VPN heurístico ─────────────────────────────────────
+        # Executado em dois cenários:
+        #   a) Nem Integrations API nem /stat/ipsecvpn retornaram dados (fonte primária)
+        #   b) Túneis "running" estão sem uptime — preenche a lacuna (fonte secundária)
+        #
         # Formato dos eventos (Network 10.3.58 / firmware 5.0.16):
         #   event: "VPN_SITE_TO_SITE_CONNECTED" | "VPN_SITE_TO_SITE_DISCONNECTED"
         #   parameters.NETWORK.name  → nome do túnel (ex: "VIVO-DC")
         #   parameters.REMOTE_IP.name → IP remoto
         #   parameters.WAN_ID.name   → interface WAN usada
-        #
-        # O syslog só armazena eventos não-reconhecidos (status=NEW). Eventos
-        # de reconexão são purgados rapidamente → não refletem estado ATUAL.
-        # Por isso usamos o syslog apenas para descobrir nomes/IPs dos túneis
-        # e o /stat/health para confirmar o estado operacional corrente.
-        if integ_tunnels is None and not got_legacy_s2s:
+        tunnels_needing_uptime = {
+            r["tunnel_name"] for r in records
+            if r["status"] == "running" and r.get("uptime") is None
+        }
+        use_syslog_as_primary = integ_tunnels is None and not got_legacy_s2s
+        use_syslog_for_uptime = bool(tunnels_needing_uptime)
+
+        if use_syslog_as_primary or use_syslog_for_uptime:
             import time as _time
             vpn_events = self._api.get_vpn_syslog_events(page_size=200)
+
+            # Busca uptime WAN para limitar estimativa (VPN não pode ser mais antigo que o WAN)
+            wan_uptime_cap = self._db.get_system_uptime()
 
             # Extrair metadados dos túneis (nome, IP remoto, WAN) do syslog
             tunnel_meta: Dict[str, Dict] = {}
@@ -1306,15 +1314,14 @@ class DataCollector:
                     }
 
             if tunnel_meta:
-                import time as _time
                 from datetime import datetime as _dt
 
                 def _parse_ts(ev: Dict) -> float:
                     raw = ev.get("time") or ev.get("timestamp")
                     if raw:
                         try:
-                            ts = float(raw)
-                            return ts / 1000 if ts > 4_102_444_800 else ts
+                            ts_val = float(raw)
+                            return ts_val / 1000 if ts_val > 4_102_444_800 else ts_val
                         except (ValueError, TypeError):
                             pass
                     raw = ev.get("datetime") or ev.get("date")
@@ -1327,8 +1334,6 @@ class DataCollector:
                             pass
                     return 0.0
 
-                # Agrupar eventos por túnel para avaliação individual
-                # (cada túnel pode ter horário de desconexão diferente)
                 tunnel_latest_ts: Dict[str, float] = {}
                 for ev in vpn_events:
                     params  = ev.get("parameters") or {}
@@ -1347,35 +1352,52 @@ class DataCollector:
                     age_sec   = (now_ts - latest_ts) if latest_ts else 0.0
                     age_hours = age_sec / 3600
 
-                    # Heurística: evento de desconexão > 2h → túnel reconectou
-                    # (eventos CONNECTED são auto-reconhecidos e purgados rapidamente)
-                    # Uptime estimado = tempo desde o último evento de desconexão.
-                    # É um lower-bound: o túnel pode ter ficado offline por horas
-                    # após o evento antes de reconectar, então o uptime real pode
-                    # ser menor. Prefixo "~" no UI indica que é estimativa.
-                    vpn_ok = age_hours > 2
+                    # Heurística: último evento de desconexão > 2h → túnel online
+                    vpn_ok    = age_hours > 2
                     uptime_est = int(age_sec) if vpn_ok and age_sec > 0 else None
 
-                    records.append({
-                        "tunnel_name": tname,
-                        "status":      "running" if vpn_ok else "down",
-                        "remote_ip":   meta["remote_ip"],
-                        "uptime":      uptime_est,
-                    })
-                    if vpn_ok:
-                        online_count += 1
+                    # Limita ao uptime WAN: VPN não pode ter ficado online mais
+                    # tempo do que o próprio link WAN (reboots do UDM reiniciam tudo)
+                    if wan_uptime_cap and uptime_est and uptime_est > wan_uptime_cap:
+                        logger.info(
+                            "VPN: uptime de '{}' limitado ao uptime WAN ({}s → {}s)",
+                            tname, uptime_est, wan_uptime_cap,
+                        )
+                        uptime_est = wan_uptime_cap
+
                     logger.info(
                         "VPN: túnel '{}' — último evento {:.1f}h atrás → {} (uptime est. {}s)",
-                        tname,
-                        age_hours,
-                        "online" if vpn_ok else "offline",
-                        uptime_est,
+                        tname, age_hours,
+                        "online" if vpn_ok else "offline", uptime_est,
                     )
 
-                logger.info(
-                    "VPN: {}/{} túneis online via syslog heurística",
-                    online_count, len(tunnel_meta),
-                )
+                    if use_syslog_as_primary:
+                        # Fonte primária: adiciona todos os túneis
+                        records.append({
+                            "tunnel_name": tname,
+                            "status":      "running" if vpn_ok else "down",
+                            "remote_ip":   meta["remote_ip"],
+                            "uptime":      uptime_est,
+                        })
+                        if vpn_ok:
+                            online_count += 1
+                    elif tname in tunnels_needing_uptime and vpn_ok:
+                        # Fonte secundária: preenche uptime de registros existentes
+                        for r in records:
+                            if r["tunnel_name"] == tname and r.get("uptime") is None:
+                                r["uptime"] = uptime_est
+                                break
+
+                if use_syslog_as_primary:
+                    logger.info(
+                        "VPN: {}/{} túneis online via syslog heurística",
+                        online_count, len(tunnel_meta),
+                    )
+                else:
+                    logger.info(
+                        "VPN: uptime completado via syslog para {} túnel(is): {}",
+                        len(tunnels_needing_uptime), list(tunnels_needing_uptime),
+                    )
 
         # ── 4. Dados de VPN embarcados no device (gateway) ────────────
         if not records:

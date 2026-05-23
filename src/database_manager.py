@@ -62,6 +62,10 @@ class DatabaseManager:
             "ALTER TABLE device_stats ADD COLUMN temp_board FLOAT",
             "ALTER TABLE device_stats ADD COLUMN temp_phy FLOAT",
             # v5 — wan throughput, firewall rules, port forwards (tables created by create_all)
+            # v6 — remove VPN records with corrupted REAL timestamps (bug: ts variable shadowing)
+            #       Old bug stored Unix float (e.g. 1777030253.736) instead of datetime TEXT.
+            #       SQLite stores them as REAL; TYPEOF != 'text' identifies them for cleanup.
+            "DELETE FROM vpn_status WHERE TYPEOF(timestamp) != 'text'",
         ]
         with self._engine.connect() as conn:
             for sql in migrations:
