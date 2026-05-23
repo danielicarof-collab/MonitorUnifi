@@ -176,13 +176,25 @@ class DataCollector:
 
             label   = "WAN2" if sub == "wan2" else "WAN"
             dev_wan = device_wan.get(label, {})
-            latency = subsystem.get("latency") or dev_wan.get("latency")
-            wan_ip  = subsystem.get("wan_ip") or dev_wan.get("ip")
+
+            # Latency: health API first, then multiple field names from device data
+            latency = (
+                subsystem.get("latency")
+                or dev_wan.get("latency")
+                or dev_wan.get("latency_ms")
+                or dev_wan.get("ping")
+            )
+            # Uptime: health API first, then device wan uptime
+            uptime = (
+                subsystem.get("uptime")
+                or dev_wan.get("uptime")
+            )
+            wan_ip = subsystem.get("wan_ip") or dev_wan.get("ip")
 
             self._db.insert_wan_status({
                 "interface": label,
                 "status":    subsystem.get("status", "unknown"),
-                "uptime":    subsystem.get("uptime"),
+                "uptime":    uptime,
                 "latency":   latency,
                 "rx_bytes":  subsystem.get("rx_bytes-r"),
                 "tx_bytes":  subsystem.get("tx_bytes-r"),

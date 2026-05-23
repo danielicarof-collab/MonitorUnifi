@@ -6,6 +6,8 @@ or once in app.py before routing.
 """
 from __future__ import annotations
 
+import math
+
 import streamlit as st
 
 # ------------------------------------------------------------------
@@ -106,7 +108,12 @@ def fmt_bytes(n: int | float | None) -> str:
     """Format a byte count as a human-readable string (B, KB, MB, GB, TB)."""
     if n is None:
         return "—"
-    n = float(n)
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "—"
+    if math.isnan(n) or math.isinf(n):
+        return "—"
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024:
             return f"{n:.1f} {unit}"
