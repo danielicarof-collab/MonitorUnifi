@@ -176,6 +176,8 @@ class DataCollector:
 
             label   = "WAN2" if sub == "wan2" else "WAN"
             dev_wan = device_wan.get(label, {})
+            logger.debug("{} health subsystem keys: {}", label, sorted(subsystem.keys()))
+            logger.debug("{} device wan keys: {}", label, sorted(dev_wan.keys()))
 
             # Latency: health API first, then multiple field names from device data
             latency = (
