@@ -67,7 +67,7 @@ def _render_wan(wan_df: pd.DataFrame) -> None:
         badge  = "🟢 Online" if is_ok else "🔴 Offline"
         iface  = row.get("interface", "WAN")
         lat    = row.get("latency_ms")
-        lat_str = f"{int(lat)} ms" if lat is not None else "—"
+        lat_str = f"{int(lat)} ms" if pd.notna(lat) else "—"
         uptime_str = fmt_uptime(row.get("uptime"))
         rx_str = fmt_bytes_rate(row.get("rx_bytes"))
         tx_str = fmt_bytes_rate(row.get("tx_bytes"))
