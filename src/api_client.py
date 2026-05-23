@@ -553,15 +553,59 @@ class UniFiAPIClient:
         result = self._request("GET", "/stat/remoteuservpn")
         return result if isinstance(result, list) else []
 
-    def get_ipsec_vpn(self) -> List[Dict]:
+    def get_site_to_site_vpn(self) -> List[Dict]:
         """
-        IPSec site-to-site VPN tunnel status.
-        Endpoint /stat/ipsecvpn é o caminho canônico no firmware legado.
-        Retorna lista vazia (nunca None) se o endpoint não existir.
+        Túneis VPN site-to-site (IPSec, WireGuard) via Integrations API v1.
+
+        Endpoint oficial (documentado em Network API 10.3.58 → Supporting Resources):
+          GET /v1/sites/{siteId}/vpn/site-to-site-tunnels
+
+        Fallback legado: /stat/ipsecvpn (não documentado oficialmente, pode existir).
+        Retorna lista vazia (nunca None) se ambos falharem.
         """
+        # Tentativa 1: Integrations API (endpoint oficial)
+        result = self._request_integrations("/vpn/site-to-site-tunnels")
+        if isinstance(result, list):
+            logger.debug("VPN site-to-site: {} túneis via integrations API", len(result))
+            return result
+        # Tentativa 2: Paginação explícita — integrations pode retornar dict com data
+        if isinstance(result, dict) and "data" in result:
+            return result["data"] if isinstance(result["data"], list) else []
+
+        # Fallback: endpoint legado (não documentado, mas pode existir)
         result = self._request("GET", "/stat/ipsecvpn")
         if isinstance(result, list):
+            logger.debug("VPN site-to-site: {} túneis via /stat/ipsecvpn", len(result))
             return result
+
+        return []
+
+    def get_vpn_servers(self) -> List[Dict]:
+        """
+        Servidores VPN configurados (OpenVPN, WireGuard).
+
+        Endpoint oficial (Network API 10.3.58 → Supporting Resources):
+          GET /v1/sites/{siteId}/vpn/servers
+        """
+        result = self._request_integrations("/vpn/servers")
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "data" in result:
+            return result["data"] if isinstance(result["data"], list) else []
+        return []
+
+    def get_wan_interfaces(self) -> List[Dict]:
+        """
+        Interfaces WAN disponíveis no site.
+
+        Endpoint oficial (Network API 10.3.58 → Supporting Resources):
+          GET /v1/sites/{siteId}/wans
+        """
+        result = self._request_integrations("/wans")
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "data" in result:
+            return result["data"] if isinstance(result["data"], list) else []
         return []
 
     def get_system_log(
@@ -726,6 +770,11 @@ class UniFiAPIClient:
             ("integrations_sites",    f"{self.host}/proxy/network/integration/v1/sites"),
             ("integrations_devices",  f"{self._base_integrations_v1}/devices"),
             ("integrations_networks", f"{self._base_integrations_v1}/networks"),
+            # Endpoints documentados em Network API 10.3.58
+            ("integrations_vpn_s2s",  f"{self._base_integrations_v1}/vpn/site-to-site-tunnels"),
+            ("integrations_vpn_srv",  f"{self._base_integrations_v1}/vpn/servers"),
+            ("integrations_wans",     f"{self._base_integrations_v1}/wans"),
+            ("integrations_clients",  f"{self._base_integrations_v1}/clients?limit=5"),
         ]
         for label, url in integrations_tests:
             resp = self._get_raw(url, _hdrs=self._headers_integrations())

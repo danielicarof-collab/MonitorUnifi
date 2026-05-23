@@ -1096,30 +1096,49 @@ class DataCollector:
         if sessions:
             logger.debug("VPN: {} sessões de usuário remoto", len(sessions))
 
-        # ── 2. Túneis IPSec site-to-site ──────────────────────────────
-        ipsec_list = self._api.get_ipsec_vpn()
-        for t in ipsec_list:
-            running = bool(
-                t.get("running") or t.get("is_up") or t.get("established")
-            )
-            uptime_val = t.get("uptime")
+        # ── 2. Túneis site-to-site (endpoint oficial da Integrations API) ────
+        # Documentado em Network API 10.3.58: GET /v1/sites/{siteId}/vpn/site-to-site-tunnels
+        # Retorna IPSec e WireGuard site-to-site.
+        # Campo "status" pode ser "CONNECTED" / "DISCONNECTED" / "CONNECTING" (Integrations API)
+        # ou "running" bool (legado /stat/ipsecvpn).
+        s2s_list = self._api.get_site_to_site_vpn()
+        for t in s2s_list:
+            # Integrations API: status como string enum
+            raw_status = str(t.get("status") or "").upper()
+            if raw_status in ("CONNECTED", "UP", "ACTIVE"):
+                running = True
+            elif raw_status in ("DISCONNECTED", "DOWN", "INACTIVE"):
+                running = False
+            else:
+                # Legado /stat/ipsecvpn: running como bool
+                running = bool(
+                    t.get("running") or t.get("is_up") or t.get("established")
+                )
+            uptime_val = t.get("uptime") or t.get("uptimeSec")
             try:
                 uptime_sec: Optional[int] = int(uptime_val) if uptime_val is not None else None
             except (TypeError, ValueError):
                 uptime_sec = None
+            # Nome: Integrations API usa "name"; legado usa "name" ou "_id"
+            tname = (
+                t.get("name") or t.get("_id")
+                or t.get("remoteHost") or t.get("remote_gateway") or "IPSec"
+            )
+            remote = (
+                t.get("remoteHost") or t.get("remote_gateway")
+                or t.get("peer_ip") or t.get("remote_host")
+            )
             records.append({
-                "tunnel_name": (
-                    t.get("name") or t.get("_id") or t.get("remote_gateway") or "IPSec"
-                ),
-                "status":    "running" if running else "down",
-                "remote_ip": t.get("remote_gateway") or t.get("peer_ip") or t.get("remote_host"),
-                "uptime":    uptime_sec,
+                "tunnel_name": tname,
+                "status":      "running" if running else "down",
+                "remote_ip":   remote,
+                "uptime":      uptime_sec,
             })
-        if ipsec_list:
-            logger.info("VPN: {} túneis IPSec via /stat/ipsecvpn", len(ipsec_list))
+        if s2s_list:
+            logger.info("VPN: {} túneis site-to-site encontrados", len(s2s_list))
 
         # ── 3. Health API — subsistema VPN (só para log, não gera records) ──
-        if not ipsec_list:
+        if not s2s_list:
             health = self._api.get_health()
             for sub in health:
                 if sub.get("subsystem", "").lower() == "vpn":
@@ -1129,7 +1148,7 @@ class DataCollector:
         # ── 4. Dados de VPN embarcados no device (gateway) ────────────
         # Em algumas versões de firmware, o gateway expõe tabelas de VPN
         # diretamente em /stat/device sob chaves como vpn_link_table.
-        if not ipsec_list:
+        if not s2s_list:
             devices = self._api.get_devices()
             for dev in devices:
                 for vpn_key in (
