@@ -3,11 +3,14 @@ Security page — threat timeline, IPS events, suspicious devices, rogue APs.
 """
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.ai_analyzer import ThreatAnalyzer
 from src.database_manager import DatabaseManager
 from ui.components.theme import metric_card, plotly_dark_layout
 
@@ -51,8 +54,98 @@ def _load_rogue_aps(_db: DatabaseManager) -> pd.DataFrame:
     return _db.get_rogue_aps()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_ai_analysis(_db: DatabaseManager, days: int) -> dict | None:
+    """Call Claude API to analyze current security posture. Cached 5 min."""
+    try:
+        analyzer = ThreatAnalyzer()
+    except ValueError:
+        return None  # ANTHROPIC_API_KEY not set
+    stats     = _db.get_summary_stats(days=1)
+    threat_df = _db.get_top_threats(days=1, limit=10)
+    sus_df    = _db.get_suspicious_clients()
+    top_threats = threat_df.to_dict("records") if not threat_df.empty else []
+    return analyzer.analyze(
+        stats            = stats,
+        threat_count     = stats.get("total_threats", 0),
+        suspicious_count = len(sus_df),
+        top_threats      = top_threats,
+    )
+
+
+def _render_ai_analysis(analysis: dict | None) -> None:
+    """Render the AI analysis card."""
+    _SEV_COLOR = {
+        "crítica": "#ff7b72",
+        "alta":    "#ffa657",
+        "média":   "#e3b341",
+        "baixa":   "#58a6ff",
+    }
+    _SEV_DOT = {
+        "crítica": "🔴",
+        "alta":    "🟠",
+        "média":   "🟡",
+        "baixa":   "🔵",
+    }
+
+    if analysis is None:
+        has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+        msg = (
+            "Configure <code>ANTHROPIC_API_KEY</code> no arquivo <code>.env</code> para ativar."
+            if not has_key
+            else "Aguardando dados suficientes para análise."
+        )
+        st.markdown(
+            f"""<div style="background:#111827;border:1px solid #1e3a5f;border-left:4px solid #484f58;
+            border-radius:12px;padding:16px 20px;margin:4px 0;">
+              <div style="color:#94a3b8;font-size:11px;font-weight:700;text-transform:uppercase;
+                   letter-spacing:0.1em;margin-bottom:10px;">🤖 Análise da IA</div>
+              <div style="color:#6b7280;font-size:13px;">{msg}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        return
+
+    sev   = analysis.get("severidade", "baixa").lower()
+    nivel = analysis.get("nivel", "N1")
+    conf  = analysis.get("confianca", 0)
+    color = _SEV_COLOR.get(sev, "#484f58")
+    dot   = _SEV_DOT.get(sev, "⚪")
+    resumo       = analysis.get("resumo", "")
+    recomendacao = analysis.get("recomendacao", "")
+
+    st.markdown(
+        f"""<div style="background:#111827;border:1px solid #1e3a5f;border-left:4px solid {color};
+        border-radius:12px;padding:16px 20px;margin:4px 0;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div style="color:#94a3b8;font-size:11px;font-weight:700;text-transform:uppercase;
+                 letter-spacing:0.1em;">🤖 Análise da IA</div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="background:#1e2a3a;border:1px solid {color};border-radius:20px;
+                   padding:3px 12px;font-size:12px;color:{color};font-weight:600;">
+                {dot} {sev.capitalize()} · {nivel}
+              </span>
+              <span style="color:#94a3b8;font-size:12px;">confiança: <b style="color:{color};">{conf}%</b></span>
+            </div>
+          </div>
+          <div style="color:#e2e8f0;font-size:13px;margin-bottom:8px;">{resumo}</div>
+          <div style="color:#94a3b8;font-size:12px;">
+            <b style="color:{color};">→</b> {recomendacao}
+          </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
 def render(db: DatabaseManager) -> None:
     st.header("Segurança & Ameaças")
+
+    # AI Analysis card
+    ai_result = _load_ai_analysis(db, 1)
+    _render_ai_analysis(ai_result)
+
+    st.divider()
 
     days = st.selectbox(
         "Janela de análise", [1, 3, 7, 14, 30], index=2,
